@@ -1,0 +1,17 @@
+# Render Blueprint for the public Sky Gallery. Base Camp stays on your laptop.
+services:
+  - type: web
+    name: walk-journal-sky-gallery
+    runtime: python
+    plan: free
+    rootDir: gallery
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: MONGODB_URI
+        sync: false   # paste your MongoDB Atlas connection string in the Render dashboard
+      - key: GALLERY_TOKEN
+        generateValue: true   # copy this into Base Camp's .env as GALLERY_TOKEN
