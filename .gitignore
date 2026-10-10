@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/
+*.db
+*.sqlite3
+eval/photos/*
+!eval/photos/.gitkeep
+!eval/photos/README.md
+.DS_Store
