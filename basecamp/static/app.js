@@ -145,6 +145,95 @@ async function makeQuest(placeId) {
   }
 }
 
+// ---------- walk suggestions ----------
+
+let suggestions = null;
+$("#find-walk").onclick = async () => {
+  show("loading", "Looking for real walks near you…");
+  const s = store.get("settings");
+  const fix = (await getFix(60000)) || { lat: s.home_lat, lng: s.home_lng };
+  const qs = new URLSearchParams({ lat: fix.lat, lng: fix.lng, tier: choice("tier"), difficulty: choice("diff"), tz: TZ });
+  try {
+    suggestions = { ...(await api(`/api/places/suggest?${qs}`)), from: fix };
+    if (!suggestions.picks.length) {
+      toast("No walks found in that range. Try a longer distance, or quest right where you are.");
+      return show("home");
+    }
+    show("suggest");
+  } catch (e) {
+    toast(e.message, 6000);
+    show("home");
+  }
+};
+
+const PIN = (cls) => L.divIcon({ className: `pin ${cls}`, html: "<span></span>", iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -26] });
+const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+const maps = {};
+function makeMap(id) {
+  if (!window.L) return null;
+  if (maps[id]) return maps[id];
+  const m = L.map(id, { zoomControl: false, attributionControl: true });
+  L.tileLayer(TILE_URL, { maxZoom: 18, attribution: TILE_ATTR }).addTo(m);
+  m._layer = L.layerGroup().addTo(m);
+  return (maps[id] = m);
+}
+
+views.suggest = () => {
+  const { picks, others, from } = suggestions;
+  $("#suggest-list").innerHTML = picks.map((p, i) => `
+    <div class="card place">
+      <p class="eyebrow">${i === 0 ? "Best right now" : "Also good"} · ${p.distance_mi} mi</p>
+      <h3>${esc(p.name)}</h3>
+      <p>${esc(p.reason)}</p>
+      <button class="btn primary" data-go="${p.id}">Go here</button>
+    </div>`).join("");
+  const m = makeMap("suggest-map");
+  if (!m) return;
+  setTimeout(() => {
+    m.invalidateSize();
+    m._layer.clearLayers();
+    L.circleMarker([from.lat, from.lng], { radius: 7, color: "#4A3B2C", fillColor: "#9CC9E3", fillOpacity: 1 }).addTo(m._layer).bindPopup("You");
+    others.forEach((p) => L.marker([p.lat, p.lng], { icon: PIN("faded") }).addTo(m._layer).bindPopup(esc(p.name)));
+    picks.forEach((p) => L.marker([p.lat, p.lng], { icon: PIN("pick") }).addTo(m._layer).bindPopup(`<b>${esc(p.name)}</b><br>${esc(p.reason)}`));
+    m.fitBounds(L.latLngBounds([[from.lat, from.lng], ...picks.map((p) => [p.lat, p.lng])]).pad(0.25));
+  }, 50);
+};
+$("#suggest-list").onclick = (e) => {
+  const id = e.target.closest("[data-go]")?.dataset.go;
+  if (id) makeQuest(id);
+};
+
+// ---------- places I've walked ----------
+
+views.map = async () => {
+  let data;
+  try { data = await api("/api/map"); store.set("mapCache", data); } catch { data = store.get("mapCache"); }
+  if (!data) return ($("#map-stats").textContent = "Map needs Base Camp. Try again when you're back online.");
+  const st = data.stats;
+  $("#map-stats").innerHTML = `<div><b>${st.walks}</b> walks</div><div><b>${st.places}</b> places</div><div><b>${fmtDuration(st.outside_seconds)}</b> outside</div>`;
+  const m = makeMap("walked-map");
+  if (!m) return;
+  setTimeout(() => {
+    m.invalidateSize();
+    m._layer.clearLayers();
+    const pts = [];
+    data.suggested.forEach((p) => {
+      L.marker([p.lat, p.lng], { icon: PIN("faded") }).addTo(m._layer).bindPopup(`${esc(p.name)}<br><small>not walked yet</small>`);
+    });
+    data.visited.forEach((p) => {
+      pts.push([p.lat, p.lng]);
+      const icon = L.divIcon({ className: "pin solid", html: `<span>${p.visits.length}</span>`, iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] });
+      const visits = p.visits.map((v) => `<div class="visit"><b>${new Date(v.date * 1000).toLocaleDateString()}</b> ${esc(v.title)}
+        <div class="thumbs">${v.photos.map((u) => `<img src="${u}" alt="">`).join("")}</div></div>`).join("");
+      L.marker([p.lat, p.lng], { icon }).addTo(m._layer).bindPopup(`<b>${esc(p.name)}</b> · ${p.visits.length} visit${p.visits.length > 1 ? "s" : ""}${visits}`, { maxWidth: 260 });
+    });
+    const s = store.get("settings");
+    if (pts.length) m.fitBounds(L.latLngBounds(pts).pad(0.3), { maxZoom: 15 });
+    else m.setView([s.home_lat, s.home_lng], 13);
+  }, 50);
+};
+
 // ---------- quest state ----------
 
 let quest = null;
