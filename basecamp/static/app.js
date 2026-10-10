@@ -16,7 +16,19 @@ async function api(path, opts = {}) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(opts.json);
   }
-  const r = await fetch(path, init);
+  let r;
+  try {
+    r = await fetch(path, init);
+  } catch {
+    setOnline(false);
+    throw Object.assign(new Error("You're offline. It's saved and will sync later."), { network: true });
+  }
+  // The tunnel answers 502/530 when Base Camp itself is unreachable: treat like offline.
+  if ([502, 504, 530].includes(r.status)) {
+    setOnline(false);
+    throw Object.assign(new Error("Base Camp is unreachable. It's saved and will sync later."), { network: true });
+  }
+  setOnline(true);
   if (!r.ok) {
     let msg = r.statusText;
     try { msg = (await r.json()).detail || msg; } catch {}
@@ -271,7 +283,8 @@ $("#intro-start").onclick = async () => {
   screenTime.start();
   speak(quest);
   show("away");
-  try { saveQuest(await api(`/api/quests/${quest.id}/start`, { json: { started_at: startedAt } })); } catch {}
+  await Outbox.add({ kind: "start", questId: quest.id, body: { started_at: startedAt } });
+  sync();
 };
 
 // ---------- voice ----------
@@ -485,18 +498,60 @@ function captureForm(job) {
 }
 
 async function submitCapture({ task, blob, takenAt, fix, source, fileModified }) {
-  const job = { questId: quest.id, taskId: task.id, clientId: crypto.randomUUID(), blob, takenAt, fix, source, fileModified };
+  // Saved to IndexedDB first, so a photo taken with no signal is never lost.
+  const job = { kind: "capture", questId: quest.id, taskId: task.id, clientId: crypto.randomUUID(), blob, takenAt, fix, source, fileModified };
+  await Outbox.add(job);
   setLocalStatus(task.id, "queued");
-  toast("Checking your photo…");
-  try {
-    const cap = await api(`/api/quests/${job.questId}/captures`, { method: "POST", body: captureForm(job) });
-    await refreshQuest();
-    toast(cap.status === "pass" ? `✓ ${cap.reason || "Verified!"}` : cap.reason || STATUS_TEXT[cap.status]);
-  } catch (e) {
-    toast(`Upload failed: ${e.message}`);
-    setLocalStatus(task.id, null);
-  }
+  toast(navigator.onLine ? "Checking your photo…" : "Saved. It'll be checked when you're back online.");
+  sync();
 }
+
+// ---------- sync ----------
+
+async function sendJob(job) {
+  if (job.kind === "start") return api(`/api/quests/${job.questId}/start`, { json: job.body });
+  if (job.kind === "capture") return api(`/api/quests/${job.questId}/captures`, { method: "POST", body: captureForm(job) });
+  if (job.kind === "finish") return api(`/api/quests/${job.questId}/finish`, { json: job.body });
+  throw new Error(`unknown job ${job.kind}`);
+}
+
+async function sync() {
+  const sent = await Outbox.flush(sendJob, (job, res, err) => {
+    if (job.questId !== quest?.id) return;
+    if (job.kind === "capture") {
+      setLocalStatus(job.taskId, null);
+      if (err) toast(`A photo couldn't be saved: ${err.message}`);
+      else if (document.visibilityState === "visible")
+        toast(res.status === "pass" ? `✓ ${res.reason || "Verified!"}` : res.reason || STATUS_TEXT[res.status]);
+    }
+    if (job.kind === "finish" && res) {
+      saveQuest(res);
+      if (document.body.dataset.view === "summary") views.summary();
+    }
+  });
+  if (sent) {
+    try { await api("/api/captures/retry-pending", { method: "POST" }); } catch {}
+    if (quest && !quest.local?.done) await refreshQuest();
+  }
+  updateNet();
+}
+
+let online = navigator.onLine;
+function setOnline(v) {
+  if (online === v) return;
+  online = v;
+  updateNet();
+}
+async function updateNet() {
+  const n = (await Outbox.all()).length;
+  const el = $("#net");
+  el.hidden = online && !n;
+  el.textContent = !online ? `offline${n ? ` · ${n} saved` : ""}` : `syncing ${n}…`;
+}
+window.addEventListener("online", () => { online = true; sync(); });
+window.addEventListener("offline", () => setOnline(false));
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && sync());
+setInterval(sync, 30000);
 
 function setLocalStatus(taskId, st) {
   const t = quest.tasks.find((x) => x.id === taskId);
@@ -517,14 +572,14 @@ $("#finish-save").onclick = async () => {
     screen_seconds: screenSeconds,
     finished_at: Date.now() / 1000,
   };
-  try {
-    const res = await api(`/api/quests/${quest.id}/finish`, { json: body });
-    saveQuest(res);
-    stopGps();
-    show("summary");
-  } catch (e) {
-    toast(`Couldn't save: ${e.message}`);
-  }
+  // Show the result right away; the server copy (points, badges) replaces it when it syncs.
+  Object.assign(quest, { finished_at: body.finished_at, screen_seconds: screenSeconds, note: body.note, mood: body.mood,
+    outside_seconds: body.finished_at - (quest.started_at || quest.local.started), new_badges: [], points: null });
+  store.set("quest", quest);
+  stopGps();
+  await Outbox.add({ kind: "finish", questId: quest.id, body });
+  show("summary");
+  sync();
 };
 
 function fmtDuration(sec) {
@@ -537,9 +592,10 @@ views.summary = () => {
   const outside = q.outside_seconds ?? (q.finished_at - q.started_at);
   $("#sum-title").textContent = q.title;
   $("#sum-screen").innerHTML = `<b>${Math.round(q.screen_seconds || 0)} seconds</b> on screen.<br><b>${fmtDuration(outside)}</b> outside.`;
-  $("#sum-points").textContent = `${q.points} points${q.streak ? ` · 🔥 ${q.streak}-day streak` : ""}`;
+  $("#sum-points").textContent = q.points == null ? "Saved on your phone. Points and badges appear when it syncs."
+    : `${q.points} points${q.streak ? ` · 🔥 ${q.streak}-day streak` : ""}`;
   $("#sum-badges").innerHTML = (q.new_badges || []).map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("");
-  $("#sum-tasks").innerHTML = q.tasks.map((t) => `<li class="task s-${t.status}"><span class="ico">${STATUS_ICON[t.status]}</span>
+  $("#sum-tasks").innerHTML = q.tasks.map((t) => `<li class="task s-${t.local_status || t.status}"><span class="ico">${STATUS_ICON[t.local_status || t.status]}</span>
     <div class="body"><span>${esc(t.prompt)}</span>${t.capture?.photo_url ? `<img src="${t.capture.photo_url}" alt="" loading="lazy">` : ""}</div></li>`).join("");
 };
 
@@ -578,3 +634,5 @@ views.journal = async () => {
 
 quest = store.get("quest");
 route();
+sync();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
