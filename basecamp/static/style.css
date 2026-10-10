@@ -257,3 +257,4 @@ body[data-view=away] .grass, body[data-view=loading] .grass, body[data-view=setu
   .clouds span:nth-child(2) { left: 60%; }
   .clouds span:nth-child(3) { left: 82%; }
 }
+.share { margin: 16px 0; padding: 14px; border-radius: 14px; background: var(--bg); border: 2px dashed var(--soft); }

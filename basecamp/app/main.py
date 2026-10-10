@@ -1,15 +1,17 @@
 """Base Camp: the FastAPI server that runs on the laptop next to Gemma."""
 import io
 import time
+from datetime import datetime
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import badges, config, context, db, gemma, places, quests, store, tracing, tts, verify
+from . import badges, config, context, db, gallery_client, gemma, places, quests, store, tracing, tts, verify
 
 tracing.init()
 db.init()
@@ -352,6 +354,30 @@ def finish_quest(qid: str, f: Finish):
     view["new_badges"] = badges.evaluate(qid) if not q["finished_at"] else []
     view["streak"] = badges.current_streak()
     return view
+
+
+# ---------- sky gallery ----------
+
+class Share(BaseModel):
+    city: str
+
+
+@app.post("/api/captures/{cid}/share")
+async def share_sky(cid: str, s: Share):
+    c = store.get_capture(cid) or _404()
+    q = store.get_quest(c["quest_id"])
+    task = next((t for t in q["tasks"] if t["id"] == c["task_id"]), {})
+    if task.get("category") != "sky" or c["status"] not in ("pass", "self"):
+        raise HTTPException(400, "Only verified sky photos can be shared.")
+    jpeg = (config.PHOTO_DIR / c["photo"]).read_bytes()
+    ok, message = await gallery_client.moderate(jpeg)
+    if not ok:
+        raise HTTPException(422, message)
+    taken = datetime.fromtimestamp(c["taken_at"], context.tzinfo(q["tz"]))
+    try:
+        return await gallery_client.share(jpeg, s.city, taken, (q["context"] or {}).get("season", "fall"))
+    except (gallery_client.ShareError, httpx.HTTPError) as e:
+        raise HTTPException(424, f"Couldn't reach the Sky Gallery: {e}")  # not 502: the phone treats 502 as offline
 
 
 # ---------- voice ----------

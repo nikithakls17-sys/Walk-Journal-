@@ -104,8 +104,15 @@ $("#setup-gps").onclick = async () => {
   $("#setup-msg").textContent = "Finding you…";
   const fix = await getFix(60000);
   if (!fix) return ($("#setup-msg").textContent = "Couldn't get your location. Type a city instead.");
-  await saveHome(fix.lat, fix.lng, null);
+  await saveHome(fix.lat, fix.lng, await cityFor(fix.lat, fix.lng));
 };
+async function cityFor(lat, lng) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&lat=${lat.toFixed(2)}&lon=${lng.toFixed(2)}`);
+    const a = (await r.json()).address || {};
+    return [a.city || a.town || a.village || a.county, a.state].filter(Boolean).join(", ") || null;
+  } catch { return null; }
+}
 $("#setup-save").onclick = async () => {
   const city = $("#setup-city").value.trim();
   if (!city) return;
@@ -597,8 +604,28 @@ views.summary = () => {
   $("#sum-points").textContent = q.points == null ? "Saved on your phone. Points and badges appear when it syncs."
     : `${q.points} points${q.streak ? ` · 🔥 ${q.streak}-day streak` : ""}`;
   $("#sum-badges").innerHTML = (q.new_badges || []).map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("");
+  const skies = q.tasks.filter((t) => t.category === "sky" && ["pass", "self"].includes(t.status) && t.capture);
+  $("#sum-share").innerHTML = skies.length && online ? `<div class="share">
+      <p><b>Share this sky to the Sky Gallery?</b><br><small class="muted">Only the photo, your city, the date and time. Gemma checks it has no people first.</small></p>
+      <label>City<input id="share-city" value="${esc(store.get("settings")?.home_city || "")}" placeholder="Warrensburg, MO"></label>
+      <button class="btn" id="share-btn" data-cid="${skies[0].capture.id}">Share my sky</button></div>` : "";
   $("#sum-tasks").innerHTML = q.tasks.map((t) => `<li class="task s-${t.local_status || t.status}"><span class="ico">${STATUS_ICON[t.local_status || t.status]}</span>
     <div class="body"><span>${esc(t.prompt)}</span>${t.capture?.photo_url ? `<img src="${t.capture.photo_url}" alt="" loading="lazy">` : ""}</div></li>`).join("");
+};
+
+$("#sum-share").onclick = async (e) => {
+  const b = e.target.closest("#share-btn");
+  if (!b) return;
+  b.disabled = true;
+  b.textContent = "Checking…";
+  try {
+    const r = await api(`/api/captures/${b.dataset.cid}/share`, { json: { city: $("#share-city").value } });
+    $("#sum-share").innerHTML = `<p>☁️ Shared! <a href="${r.gallery}" target="_blank" rel="noopener">See the Sky Gallery</a></p>`;
+  } catch (err) {
+    toast(err.message, 6000);
+    b.disabled = false;
+    b.textContent = "Share my sky";
+  }
 };
 
 // ---------- journal ----------
