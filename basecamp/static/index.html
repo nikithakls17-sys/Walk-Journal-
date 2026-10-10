@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#7BA05B">
+  <title>Walk Journal</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="clouds" aria-hidden="true"><span></span><span></span><span></span></div>
+    <h1><a href="#home">Walk Journal</a></h1>
+    <span id="net" class="net" hidden>offline</span>
+  </header>
+
+  <main>
+    <!-- Setup -->
+    <section id="v-setup" class="view" hidden>
+      <div class="card">
+        <h2>Welcome</h2>
+        <p>Where's home? Walk Journal uses this to find walks near you.</p>
+        <button id="setup-gps" class="btn big">Use my location</button>
+        <p class="or">or</p>
+        <label>City<input id="setup-city" placeholder="Warrensburg, MO"></label>
+        <button id="setup-save" class="btn">Save</button>
+        <p id="setup-msg" class="muted"></p>
+      </div>
+    </section>
+
+    <!-- Home -->
+    <section id="v-home" class="view" hidden>
+      <div class="card">
+        <h2>Ready to go outside?</h2>
+        <fieldset class="choices">
+          <legend>Distance</legend>
+          <label><input type="radio" name="tier" value="nearby" checked><span>Nearby<small>under 1 mi</small></span></label>
+          <label><input type="radio" name="tier" value="walk_run"><span>Walk-Run<small>1–5 mi</small></span></label>
+          <label><input type="radio" name="tier" value="adventure"><span>Adventure<small>up to 20 mi</small></span></label>
+        </fieldset>
+        <fieldset class="choices">
+          <legend>Difficulty</legend>
+          <label><input type="radio" name="diff" value="easy" checked><span>Easy<small>3 finds</small></span></label>
+          <label><input type="radio" name="diff" value="medium"><span>Medium<small>5 finds</small></span></label>
+          <label><input type="radio" name="diff" value="hard"><span>Hard<small>7 finds</small></span></label>
+        </fieldset>
+        <button id="find-walk" class="btn big primary">Find me a walk</button>
+        <button id="quest-here" class="btn ghost">Quest right where I am</button>
+      </div>
+      <div id="resume" class="card" hidden>
+        <p>You have a quest in progress: <strong id="resume-title"></strong></p>
+        <button id="resume-btn" class="btn">Continue</button>
+      </div>
+    </section>
+
+    <!-- Suggestions -->
+    <section id="v-suggest" class="view" hidden>
+      <div id="suggest-map" class="map"></div>
+      <div id="suggest-list"></div>
+    </section>
+
+    <!-- Loading -->
+    <section id="v-loading" class="view" hidden>
+      <div class="center">
+        <div class="sprout" aria-hidden="true"></div>
+        <p id="loading-msg">Thinking about your walk…</p>
+      </div>
+    </section>
+
+    <!-- Quest intro -->
+    <section id="v-intro" class="view" hidden>
+      <div class="card note">
+        <p class="eyebrow" id="intro-place"></p>
+        <h2 id="intro-title"></h2>
+        <p id="intro-text" class="intro"></p>
+        <p class="muted" id="intro-meta"></p>
+        <ol id="intro-tasks" class="tasks plain"></ol>
+        <button id="intro-start" class="btn big primary">Start &amp; read it to me</button>
+      </div>
+    </section>
+
+    <!-- Phone away -->
+    <section id="v-away" class="view away" hidden>
+      <div class="away-inner">
+        <p class="away-line">Phone away. Go outside.</p>
+        <p class="muted" id="away-timer"></p>
+        <button id="away-replay" class="btn ghost small">Hear it again</button>
+        <details id="away-details">
+          <summary>Show tasks</summary>
+          <ul id="task-list" class="tasks"></ul>
+          <button id="finish-btn" class="btn">I'm done</button>
+        </details>
+      </div>
+    </section>
+
+    <!-- Finish -->
+    <section id="v-finish" class="view" hidden>
+      <div class="card note">
+        <h2>Welcome back</h2>
+        <label>How did it go? How do you feel?
+          <textarea id="finish-note" rows="4" placeholder="The lake was glassy and a heron watched me…"></textarea>
+        </label>
+        <fieldset class="moods">
+          <legend>Mood (optional)</legend>
+          <label><input type="radio" name="mood" value="calm"><span>😌 calm</span></label>
+          <label><input type="radio" name="mood" value="happy"><span>😊 happy</span></label>
+          <label><input type="radio" name="mood" value="energized"><span>⚡ energized</span></label>
+          <label><input type="radio" name="mood" value="tired"><span>😴 tired</span></label>
+        </fieldset>
+        <button id="finish-save" class="btn big primary">Save to my journal</button>
+      </div>
+    </section>
+
+    <!-- Summary -->
+    <section id="v-summary" class="view" hidden>
+      <div class="card note">
+        <h2 id="sum-title"></h2>
+        <p class="big-stat" id="sum-screen"></p>
+        <p id="sum-points" class="muted"></p>
+        <div id="sum-badges" class="badges"></div>
+        <ul id="sum-tasks" class="tasks"></ul>
+        <div id="sum-share"></div>
+        <a href="#home" class="btn">Home</a>
+      </div>
+    </section>
+  </main>
+
+  <!-- Camera overlay -->
+  <div id="camera" class="camera" hidden>
+    <video id="cam-video" playsinline autoplay muted></video>
+    <p id="cam-task" class="cam-task"></p>
+    <p id="cam-gps" class="cam-gps"></p>
+    <div class="cam-bar">
+      <button id="cam-cancel" class="btn ghost">Cancel</button>
+      <button id="cam-shutter" class="shutter" aria-label="Take photo"></button>
+      <span></span>
+    </div>
+  </div>
+  <input id="cam-fallback" type="file" accept="image/*" capture="environment" hidden>
+  <input id="tracker-input" type="file" accept="image/*" hidden>
+
+  <nav class="tabs">
+    <a href="#home">Walk</a>
+    <a href="#map">Map</a>
+    <a href="#journal">Journal</a>
+  </nav>
+
+  <div class="grass" aria-hidden="true"></div>
+  <div id="toast" class="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>
