@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import config, context, db, gemma, places, quests, store, tracing, verify
+from . import badges, config, context, db, gemma, places, quests, store, tracing, tts, verify
 
 tracing.init()
 db.init()
@@ -349,8 +349,44 @@ def finish_quest(qid: str, f: Finish):
                        points=points_for(tasks))
     view = quest_view(qid)
     view["outside_seconds"] = (view["finished_at"] or now) - view["started_at"]
-    view["new_badges"] = []
+    view["new_badges"] = badges.evaluate(qid) if not q["finished_at"] else []
+    view["streak"] = badges.current_streak()
     return view
+
+
+# ---------- voice ----------
+
+@app.get("/api/quests/{qid}/audio")
+async def quest_audio(qid: str):
+    q = store.get_quest(qid) or _404()
+    try:
+        path = await tts.mp3_for(tts.speech_text(q))
+    except tts.TTSError as e:
+        raise HTTPException(503, str(e))
+    return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=31536000"})
+
+
+# ---------- journal & badges ----------
+
+@app.get("/api/journal")
+def journal():
+    with db.tx() as c:
+        qs = db.rows(c.execute("SELECT id FROM quests WHERE status='done' ORDER BY finished_at DESC").fetchall())
+        earned_by_quest: dict[str, list] = {}
+        for r in c.execute("SELECT code, quest_id FROM badges").fetchall():
+            earned_by_quest.setdefault(r["quest_id"], []).append(badges.describe(r["code"]))
+    entries = []
+    for row in qs:
+        v = quest_view(row["id"])
+        v["outside_seconds"] = (v["finished_at"] or 0) - (v["started_at"] or 0)
+        v["badges"] = earned_by_quest.get(row["id"], [])
+        entries.append(v)
+    return {"entries": entries, "streak": badges.current_streak()}
+
+
+@app.get("/api/badges")
+def all_badges():
+    return {"badges": badges.all_badges(), "streak": badges.current_streak()}
 
 
 def _404():

@@ -83,6 +83,7 @@ def build(place: dict, distance_tier: str, difficulty: str, tz: str | None, rece
         "is_night": is_night,
         "sunrise": sunrise.strftime("%H:%M") if sunrise else None,
         "sunset": sunset.strftime("%H:%M") if sunset else None,
+        "sunset_ts": sunset.timestamp() if sunset else None,
         "minutes_until_sunset": minutes_until_sunset,
         "weather": weather(place["lat"], place["lng"]) if with_weather else None,
         "recent_task_types": recent_task_types,

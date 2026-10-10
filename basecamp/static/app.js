@@ -138,6 +138,7 @@ async function makeQuest(placeId) {
   try {
     const q = await api("/api/quests", { json: { place_id: placeId, distance_tier: choice("tier"), difficulty: choice("diff"), tz: TZ } });
     saveQuest(q);
+    await prefetchAudio(q);
     show("intro");
   } catch (e) {
     toast(`Couldn't make a quest: ${e.message}`);
@@ -274,11 +275,41 @@ $("#intro-start").onclick = async () => {
 };
 
 // ---------- voice ----------
+// ElevenLabs mp3 from Base Camp, cached on the phone before leaving; browser speech as a fallback.
 
-function speak(q) {
+const AUDIO_CACHE = "wj-audio-v1";
+async function prefetchAudio(q) {
+  const url = `/api/quests/${q.id}/audio`;
+  try {
+    const cache = await caches.open(AUDIO_CACHE);
+    if (await cache.match(url)) return true;
+    const r = await fetch(url);
+    if (!r.ok) return false;
+    await cache.put(url, r);
+    return true;
+  } catch { return false; }
+}
+
+async function speak(q) {
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  const audio = $("#voice");
+  try {
+    const cache = await caches.open(AUDIO_CACHE);
+    const hit = await cache.match(`/api/quests/${q.id}/audio`);
+    if (hit) {
+      if (audio._url) URL.revokeObjectURL(audio._url);
+      audio._url = URL.createObjectURL(await hit.blob());
+      audio.src = audio._url;
+      await audio.play();
+      return;
+    }
+  } catch {}
+  speakBrowser(q);
+}
+
+function speakBrowser(q) {
   if (!("speechSynthesis" in window)) return;
-  speechSynthesis.cancel();
-  const text = `${q.title}. ${q.spoken_intro} Here's what to find. ${q.tasks.map((t, i) => `${i + 1}. ${t.prompt}.`).join(" ")}`;
+  const text = `${q.title}. ${q.spoken_intro} Here's what to find. ${q.tasks.map((t, i) => `${i + 1}. ${t.prompt}.`).join(" ")} Enjoy the walk.`;
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 0.95;
   speechSynthesis.speak(u);
@@ -506,10 +537,41 @@ views.summary = () => {
   const outside = q.outside_seconds ?? (q.finished_at - q.started_at);
   $("#sum-title").textContent = q.title;
   $("#sum-screen").innerHTML = `<b>${Math.round(q.screen_seconds || 0)} seconds</b> on screen.<br><b>${fmtDuration(outside)}</b> outside.`;
-  $("#sum-points").textContent = `${q.points} points`;
+  $("#sum-points").textContent = `${q.points} points${q.streak ? ` · 🔥 ${q.streak}-day streak` : ""}`;
   $("#sum-badges").innerHTML = (q.new_badges || []).map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("");
   $("#sum-tasks").innerHTML = q.tasks.map((t) => `<li class="task s-${t.status}"><span class="ico">${STATUS_ICON[t.status]}</span>
     <div class="body"><span>${esc(t.prompt)}</span>${t.capture?.photo_url ? `<img src="${t.capture.photo_url}" alt="" loading="lazy">` : ""}</div></li>`).join("");
+};
+
+// ---------- journal ----------
+
+views.journal = async () => {
+  let data, badges;
+  try {
+    [data, badges] = await Promise.all([api("/api/journal"), api("/api/badges")]);
+    store.set("journalCache", { data, badges });
+  } catch {
+    ({ data, badges } = store.get("journalCache", {}));
+  }
+  if (!data) return ($("#j-entries").innerHTML = `<p class="muted">Your journal lives on Base Camp. Open it when you're back online.</p>`);
+  const s = data.streak;
+  $("#j-streak").textContent = s ? `🔥 ${s}-day streak` : "Start a streak today.";
+  $("#j-badges").innerHTML = badges.badges.map((b) => `<div class="badge ${b.earned_at ? "" : "locked"}" title="${esc(b.how)}">
+    <span>${b.icon}</span>${esc(b.name)}</div>`).join("");
+  if (!data.entries.length) return ($("#j-entries").innerHTML = `<p class="muted center">No walks yet. Your first page is waiting outside.</p>`);
+  $("#j-entries").innerHTML = data.entries.map((q) => {
+    const verified = q.tasks.filter((t) => t.status === "pass").length;
+    const photos = q.tasks.filter((t) => t.capture?.photo_url && t.kind === "photo");
+    return `<article class="card note entry">
+      <p class="eyebrow">${new Date(q.finished_at * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${esc(q.place?.name || "")}</p>
+      <h3>${esc(q.title)}</h3>
+      <p class="muted">${verified}/${q.tasks.length} verified · ${fmtDuration(q.outside_seconds)} outside · ${Math.round(q.screen_seconds || 0)} s on screen${q.mood ? ` · ${esc(q.mood)}` : ""}</p>
+      ${q.note ? `<blockquote>${esc(q.note)}</blockquote>` : ""}
+      <div class="thumbs big">${photos.map((t) => `<figure><img src="${t.capture.photo_url}" alt="${esc(t.prompt)}" loading="lazy">
+        <figcaption>${STATUS_ICON[t.status]} ${esc(t.prompt)}</figcaption></figure>`).join("")}</div>
+      ${q.badges.length ? `<div class="badges">${q.badges.map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("")}</div>` : ""}
+    </article>`;
+  }).join("");
 };
 
 // ---------- boot ----------

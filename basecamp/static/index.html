@@ -67,6 +67,15 @@
       <p class="muted legend"><span class="dot solid"></span> walked &nbsp; <span class="dot faded"></span> not yet</p>
     </section>
 
+    <!-- Journal -->
+    <section id="v-journal" class="view" hidden>
+      <div class="card">
+        <p class="streak" id="j-streak"></p>
+        <div id="j-badges" class="shelf"></div>
+      </div>
+      <div id="j-entries"></div>
+    </section>
+
     <!-- Loading -->
     <section id="v-loading" class="view" hidden>
       <div class="center">
@@ -146,6 +155,7 @@
   </div>
   <input id="cam-fallback" type="file" accept="image/*" capture="environment" hidden>
   <input id="tracker-input" type="file" accept="image/*" hidden>
+  <audio id="voice" preload="auto"></audio>
 
   <nav class="tabs">
     <a href="#home">Walk</a>

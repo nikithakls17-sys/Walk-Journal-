@@ -324,7 +324,7 @@ async def generate(ctx: dict, place: dict, attempts: int = 2) -> tuple[dict, str
         "hard": f"Write {n - 1} photo tasks: seasonal finds, 2 place-specific tasks, and 1 rare find (rare=true) "
                 "that might not be possible this time of year.",
     }[ctx["difficulty"]]
-    facts = dict(ctx, place={k: v for k, v in ctx["place"].items() if k not in ("lat", "lng")})
+    facts = {k: v for k, v in ctx.items() if k != "sunset_ts"} | {"place": {k: v for k, v in ctx["place"].items() if k not in ("lat", "lng")}}
     prompt = (f"FACTS:\n{json.dumps(facts, indent=1)}\n\n{rules}\n"
               f"Suggest deadline_minutes around {DEFAULT_DEADLINE[ctx['difficulty']]}.")
     best, best_dropped, best_notes = None, 99, []
