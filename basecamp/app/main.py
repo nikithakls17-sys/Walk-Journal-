@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import config, context, db, gemma, quests, store, tracing, verify
+from . import config, context, db, gemma, places, quests, store, tracing, verify
 
 tracing.init()
 db.init()
@@ -58,6 +58,54 @@ def place_here(h: Here):
     pid = f"here-{round(h.lat, 4)}-{round(h.lng, 4)}"
     return store.save_place({"id": pid, "name": h.name or "Right Here", "type": "neighborhood walk",
                              "description": "", "features": [], "lat": h.lat, "lng": h.lng})
+
+
+@app.get("/api/places/suggest")
+async def suggest(lat: float, lng: float, tier: str = "nearby", difficulty: str = "easy", tz: str | None = None):
+    try:
+        cands = await places.nearby(lat, lng, tier)
+    except places.PlacesError as e:
+        raise HTTPException(503, f"Couldn't search for places: {e}")
+    if not cands:
+        return {"picks": [], "others": [], "source": "none"}
+    anchor = {"name": "you", "lat": lat, "lng": lng}
+    ctx = context.build(anchor, tier, difficulty, tz, [])
+    facts = {k: ctx[k] for k in ("season", "local_time", "time_of_day", "sunset", "minutes_until_sunset", "weather",
+                                 "difficulty", "distance_tier")}
+    picks, source = await places.rank(cands, facts)
+    pick_ids = {p["id"] for p in picks}
+    slim = lambda p: {k: p.get(k) for k in ("id", "name", "type", "lat", "lng", "distance_mi", "rating", "address", "reason")}
+    return {"picks": [slim(p) for p in picks], "others": [slim(p) for p in cands if p["id"] not in pick_ids],
+            "source": source}
+
+
+# ---------- map ----------
+
+@app.get("/api/map")
+def map_data():
+    with db.tx() as c:
+        done = db.rows(c.execute("""SELECT q.id, q.place_id, q.title, q.started_at, q.finished_at FROM quests q
+                                    WHERE q.status='done' ORDER BY q.finished_at DESC""").fetchall())
+        all_places = {p["id"]: p for p in db.rows(c.execute("SELECT id, name, type, lat, lng FROM places").fetchall())}
+        thumbs = db.rows(c.execute("""SELECT quest_id, photo FROM captures WHERE status IN ('pass','self')
+                                      AND kind='photo' ORDER BY created_at""").fetchall())
+    photos_by_quest: dict[str, list[str]] = {}
+    for t in thumbs:
+        photos_by_quest.setdefault(t["quest_id"], []).append(f"/photos/{t['photo']}")
+    visited: dict[str, dict] = {}
+    outside = 0.0
+    for q in done:
+        p = all_places.get(q["place_id"])
+        if not p:
+            continue
+        v = visited.setdefault(p["id"], {**p, "visits": []})
+        v["visits"].append({"quest_id": q["id"], "title": q["title"], "date": q["finished_at"],
+                            "photos": photos_by_quest.get(q["id"], [])[:4]})
+        if q["started_at"] and q["finished_at"]:
+            outside += max(0, q["finished_at"] - q["started_at"])
+    suggested = [p for pid, p in all_places.items() if pid not in visited and not pid.startswith("here-")]
+    return {"visited": list(visited.values()), "suggested": suggested,
+            "stats": {"walks": len(done), "places": len(visited), "outside_seconds": round(outside)}}
 
 
 # ---------- quests ----------
