@@ -1,0 +1,2 @@
+Nunito font (fonts/nunito-latin-wght-normal.woff2) by Vernon Adams, Cyreal and Jacques Le Bailly.
+Licensed under the SIL Open Font License 1.1: https://openfontlicense.org

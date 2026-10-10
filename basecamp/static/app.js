@@ -55,6 +55,8 @@ const views = {};
 function show(name, msg) {
   $$(".view").forEach((v) => (v.hidden = v.id !== `v-${name}`));
   document.body.dataset.view = name;
+  const tab = { home: "home", suggest: "home", intro: "home", summary: "home", finish: "home", map: "map", journal: "journal" }[name];
+  $$(".tabs a").forEach((a) => a.classList.toggle("on", a.getAttribute("href") === `#${tab}`));
   if (name === "loading") $("#loading-msg").textContent = msg || "Thinking about your walk…";
   views[name]?.();
   window.scrollTo(0, 0);
@@ -630,8 +632,33 @@ views.journal = async () => {
   }).join("");
 };
 
+// ---------- swaying grass ----------
+
+function buildGrass() {
+  const W = 1200, H = 90, NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  for (let layer = 3; layer >= 1; layer--) {
+    for (let x = -10; x < W + 10; x += 7 + rnd() * 9) {
+      const h = H * (0.35 + rnd() * 0.6) * (layer === 3 ? 0.8 : 1);
+      const w = 5 + rnd() * 5;
+      const lean = (rnd() - 0.5) * 18;
+      const p = document.createElementNS(NS, "path");
+      p.setAttribute("d", `M${x},${H} Q${x + w / 2 + lean / 2},${H - h / 2} ${x + w / 2 + lean},${H - h} Q${x + w / 2 + lean / 3},${H - h / 2} ${x + w},${H} Z`);
+      p.setAttribute("class", `blade g${layer}`);
+      p.style.animationDelay = `${-(rnd() * 8).toFixed(2)}s`;
+      svg.appendChild(p);
+    }
+  }
+  $(".grass").appendChild(svg);
+}
+
 // ---------- boot ----------
 
+buildGrass();
 quest = store.get("quest");
 route();
 sync();
