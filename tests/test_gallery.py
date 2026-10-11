@@ -1,7 +1,5 @@
 import importlib.util
 import io
-import os
-import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -10,7 +8,6 @@ from PIL import Image
 from basecamp.app import gallery_client, gemma
 from tests.test_core import client, new_quest, photo, upload
 
-os.environ["DATA_DIR"] = os.environ.get("DATA_DIR") or tempfile.mkdtemp()
 spec = importlib.util.spec_from_file_location("sky_gallery", Path(__file__).parents[1] / "gallery" / "app.py")
 sky = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sky)

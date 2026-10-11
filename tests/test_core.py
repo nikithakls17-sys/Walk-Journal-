@@ -1,16 +1,12 @@
 """End-to-end test of the core loop with Gemma mocked out."""
 import io
 import os
-import tempfile
 import time
 
-os.environ["DATA_DIR"] = tempfile.mkdtemp()
-os.environ["OLLAMA_URL"] = "http://127.0.0.1:9"  # nothing listens here
+from fastapi.testclient import TestClient
+from PIL import Image, ImageDraw
 
-from fastapi.testclient import TestClient  # noqa: E402
-from PIL import Image, ImageDraw  # noqa: E402
-
-from basecamp.app import gemma, main, quests, verify  # noqa: E402
+from basecamp.app import gemma, main, quests, verify
 
 client = TestClient(main.app)
 LAT, LNG = 38.7628, -93.7360
