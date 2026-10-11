@@ -28,6 +28,7 @@ async def chat(prompt: str, schema: dict, *, system: str | None = None, images: 
         "model": config.GEMMA_MODEL,
         "messages": messages,
         "format": schema,
+        "think": False,  # gemma4 thinks by default: slow on a laptop, and the reply sometimes ignored the schema
         "stream": False,
         "options": {"temperature": temperature},
     }
