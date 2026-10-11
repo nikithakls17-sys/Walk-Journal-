@@ -4,6 +4,7 @@
     python -m basecamp --no-tunnel  # server only
 """
 import argparse
+import os
 import re
 import shutil
 import socket
@@ -44,8 +45,17 @@ def banner(url: str, note: str = ""):
     print_qr(url)
 
 
+def find_cloudflared() -> str | None:
+    # A fresh install isn't on PATH for terminals opened before it, so also check the usual folders.
+    candidates = [shutil.which("cloudflared")]
+    for env in ("ProgramFiles(x86)", "ProgramFiles"):
+        if os.environ.get(env):
+            candidates.append(os.path.join(os.environ[env], "cloudflared", "cloudflared.exe"))
+    return next((c for c in candidates if c and os.path.exists(c)), None)
+
+
 def start_tunnel():
-    exe = shutil.which("cloudflared")
+    exe = find_cloudflared()
     if not exe:
         banner(f"http://{lan_ip()}:{PORT}",
                "  cloudflared not found, so this is plain HTTP on your Wi-Fi.\n"
