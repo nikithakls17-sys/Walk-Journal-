@@ -18,6 +18,10 @@ Walk Journal finds real walks near you, writes a seasonal, place-specific photo 
 6. Base Camp checks the proof: **right place** (GPS radius), **right time** (quest window), **right thing** (Gemma vision).
 7. Finish with a journal note and mood. You get badges, your streak, and your screen time: *"92 seconds on screen. 48 minutes outside."*
 
+### Swap this task
+
+Every unfinished photo task has a **Swap this task** button: Easy quests get 1 swap, Medium and Hard get 2 (separate from Hard's one skip for the rare find). Gemma writes one replacement from the same quest context (season, time of day, walk mode, the place's real features). The replacement goes through the same rules as the original quest: no invented place features, nothing unsafe, no task types already in this quest. A place-specific or rare task is replaced with another of the same kind. There's no point penalty, and the quest notification updates to match.
+
 ### Walk from here
 
 No destination needed. **Walk from here** turns a normal walk around your home into a quest:
@@ -171,7 +175,7 @@ First Grass · Leaf Peeper · Cloud Spotter · Rare Find · Explorer · Regular 
 
 ```bash
 pip install pytest
-python -m pytest tests     # 62 tests: core loop, rules, walk from here, gallery photos + EXIF, notifications, places, journal, sky gallery, tracing, eval
+python -m pytest tests     # 78 tests: core loop, rules, task swaps, walk from here, gallery photos + EXIF, notifications, places, journal, sky gallery, tracing, eval
 ```
 
 `BUILD_LOG.md` is the bug diary: what broke, why, and the fix.
