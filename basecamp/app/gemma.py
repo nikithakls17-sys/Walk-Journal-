@@ -2,6 +2,7 @@
 import base64
 import json
 import time
+from typing import Callable
 
 import httpx
 
@@ -13,7 +14,9 @@ class GemmaError(RuntimeError):
 
 
 async def chat(prompt: str, schema: dict, *, system: str | None = None, images: list[bytes] | None = None,
-               temperature: float = 0.7, operation: str = "chat", timeout: float = 180) -> dict:
+               temperature: float = 0.7, operation: str = "chat", timeout: float = 180,
+               outcome: Callable[[dict], str] | None = None) -> dict:
+    """Call Gemma with a JSON schema. `outcome` labels the result for tracing (runs inside the span)."""
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -50,7 +53,8 @@ async def chat(prompt: str, schema: dict, *, system: str | None = None, images: 
             output_tokens=data.get("eval_count"),
             response=content,
         )
-        result["_span"] = span
+        if outcome:
+            span.outcome(outcome(result))
         return result
 
 

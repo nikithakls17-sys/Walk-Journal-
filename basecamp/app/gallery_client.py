@@ -30,10 +30,14 @@ class ShareError(RuntimeError):
 async def moderate(jpeg: bytes) -> tuple[bool, str]:
     try:
         r = await gemma.chat("Can this photo be shared publicly in a gallery of skies?", MODERATION_SCHEMA,
-                             system=MODERATION_SYSTEM, images=[jpeg], temperature=0.0, operation="moderate_sky")
+                             system=MODERATION_SYSTEM, images=[jpeg], temperature=0.0, operation="moderate_sky",
+                             outcome=lambda m: "share_allowed" if _verdict(m)[0] else "share_blocked")
     except gemma.GemmaError:
         return False, "Base Camp couldn't check this photo right now, so it wasn't shared. Try again later."
-    span = r.pop("_span", None)
+    return _verdict(r)
+
+
+def _verdict(r: dict) -> tuple[bool, str]:
     if r.get("people_or_faces"):
         verdict = False, "This photo seems to have a person in it, so it stays private. Skies only!"
     elif r.get("readable_text"):
@@ -42,8 +46,6 @@ async def moderate(jpeg: bytes) -> tuple[bool, str]:
         verdict = False, "This one is mostly not sky, so it stays in your journal."
     else:
         verdict = True, "Looks like a lovely sky."
-    if span:
-        span.outcome("share_allowed" if verdict[0] else "share_blocked")
     return verdict
 
 

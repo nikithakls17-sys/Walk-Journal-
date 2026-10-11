@@ -131,10 +131,10 @@ async def rank(cands: list[dict], ctx: dict) -> tuple[list[dict], str]:
                 "times_visited": visits.get(p["id"], 0)} for i, p in enumerate(pool)]
     prompt = f"RIGHT NOW: {json.dumps(ctx)}\n\nPLACES:\n{json.dumps(listing, indent=1)}\n\nPick the best 3."
     try:
-        r = await gemma.chat(prompt, RANK_SCHEMA, system=RANK_SYSTEM, temperature=0.4, operation="rank_walks")
+        r = await gemma.chat(prompt, RANK_SCHEMA, system=RANK_SYSTEM, temperature=0.4, operation="rank_walks",
+                             outcome=lambda res: f"ranked:{len(res.get('picks', []))}")
     except gemma.GemmaError:
         return [dict(p, reason=default_reason(p, visits)) for p in pool[:3]], "code"
-    span = r.pop("_span", None)
     picks, used = [], set()
     for pick in r.get("picks", []):
         i = pick.get("index")
@@ -146,8 +146,6 @@ async def rank(cands: list[dict], ctx: dict) -> tuple[list[dict], str]:
             break
         if i not in used:
             picks.append(dict(p, reason=default_reason(p, visits)))
-    if span:
-        span.outcome(f"ranked:{len(used)}_valid")
     return picks[:3], "gemma"
 
 

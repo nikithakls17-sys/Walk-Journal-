@@ -314,6 +314,12 @@ def fallback_quest(ctx: dict, place: dict) -> dict:
     return enforce_rules(raw, ctx, place)[0]
 
 
+def _quest_outcome(raw: dict, ctx: dict, place: dict) -> str:
+    notes = enforce_rules(raw, dict(ctx), place)[1]
+    dropped = sum(1 for x in notes if x.startswith("dropped"))
+    return "quest_generated" if not dropped else f"quest_repaired:{dropped}"
+
+
 async def generate(ctx: dict, place: dict, attempts: int = 2) -> tuple[dict, str, list[str]]:
     """Returns (quest, source, repair_notes). source is 'gemma' or 'fallback'."""
     mark_night(ctx)
@@ -330,14 +336,12 @@ async def generate(ctx: dict, place: dict, attempts: int = 2) -> tuple[dict, str
     best, best_dropped, best_notes = None, 99, []
     for _ in range(attempts):
         try:
-            raw = await gemma.chat(prompt, QUEST_SCHEMA, system=SYSTEM, temperature=0.8, operation="generate_quest")
+            raw = await gemma.chat(prompt, QUEST_SCHEMA, system=SYSTEM, temperature=0.8, operation="generate_quest",
+                                   outcome=lambda r: _quest_outcome(r, ctx, place))
         except gemma.GemmaError as e:
             return fallback_quest(ctx, place), "fallback", [str(e)]
-        span = raw.pop("_span", None)
         quest, notes = enforce_rules(raw, ctx, place)
         dropped = sum(1 for x in notes if x.startswith("dropped"))
-        if span:
-            span.outcome("quest_generated" if not dropped else f"quest_repaired:{dropped}")
         if dropped < best_dropped:
             best, best_dropped, best_notes = quest, dropped, notes
         if dropped <= n // 3:

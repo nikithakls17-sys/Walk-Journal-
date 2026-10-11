@@ -98,14 +98,22 @@ async def check_content(image_jpeg: bytes, task: dict) -> dict:
               "Does this photo show that? Answer in JSON.")
     try:
         r = await gemma.chat(prompt, VISION_SCHEMA, system=VISION_SYSTEM, images=[image_jpeg],
-                             temperature=0.1, operation="verify_photo", timeout=120)
+                             temperature=0.1, operation="verify_photo", timeout=120,
+                             outcome=lambda g: OUTCOME_LABEL[decide_content(_clamp(g))])
     except gemma.GemmaError as e:
         return {"error": str(e)}
-    span = r.pop("_span", None)
-    r["confidence"] = max(0.0, min(1.0, float(r.get("confidence") or 0)))
-    if span:
-        span.outcome(decide_content(r))
-    return r
+    return _clamp(r)
+
+
+OUTCOME_LABEL = {"pass": "photo_match", "fail": "photo_no_match", "unsure": "couldnt_tell", "pending": "error"}
+
+
+def _clamp(g: dict) -> dict:
+    try:
+        g["confidence"] = max(0.0, min(1.0, float(g.get("confidence") or 0)))
+    except (TypeError, ValueError):
+        g["confidence"] = 0.0
+    return g
 
 
 def decide_content(g: dict) -> str:
@@ -122,12 +130,10 @@ async def read_tracker(image_jpeg: bytes, today: str) -> dict:
     try:
         r = await gemma.chat(f"Today is {today}. Read this fitness tracker screenshot.", TRACKER_SCHEMA,
                              system=TRACKER_SYSTEM, images=[image_jpeg], temperature=0.0,
-                             operation="read_tracker", timeout=120)
+                             operation="read_tracker", timeout=120,
+                             outcome=lambda t: "tracker_readable" if t.get("readable") else "tracker_unreadable")
     except gemma.GemmaError as e:
         return {"error": str(e)}
-    span = r.pop("_span", None)
-    if span:
-        span.outcome("tracker_readable" if r.get("readable") else "tracker_unreadable")
     return r
 
 
