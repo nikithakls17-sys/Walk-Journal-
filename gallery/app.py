@@ -22,7 +22,7 @@ DATA_DIR = os.getenv("DATA_DIR", ".")
 MAX_BYTES = 4 * 1024 * 1024
 MAX_PX = 1280
 RATE = (5, 3600)  # 5 uploads per IP per hour
-SEASONS = {"spring", "summer", "fall", "winter"}
+SEASONS = {"spring", "summer", "fall", "winter", "monsoon", "post-monsoon", "wet", "dry"}  # incl. tropical seasons
 
 app = FastAPI(title="Walk Journal Sky Gallery")
 

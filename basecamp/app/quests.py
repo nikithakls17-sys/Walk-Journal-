@@ -61,6 +61,68 @@ RARE_TASKS = {
                ("Spot a bee on a flower", "a bee on a flower", "animal", "bee on flower")],
 }
 
+# Tropical seasons (between latitudes -23.5 and 23.5). Keys match context.season_info()["key"].
+SEASON_TASKS |= {
+    "tropical-summer": [
+        ("Find a hibiscus flower", "a hibiscus flower", "flower", "hibiscus"),
+        ("Find bougainvillea in bloom", "bougainvillea flowers", "flower", "bougainvillea"),
+        ("Photograph some neem leaves", "neem tree leaves, thin and toothed", "leaf", "neem leaves"),
+        ("Spot a coconut tree", "a coconut palm tree", "tree", "coconut tree"),
+        ("Spot a crow or a myna", "a crow or a myna bird", "animal", "crow or myna"),
+        ("Photograph the bright, warm sky", "a bright sky", "sky", "warm sky"),
+    ],
+    "monsoon": [
+        ("Find a puddle after the rain", "a puddle of rainwater", "water", "rain puddle"),
+        ("Find raindrops on a leaf", "water drops on a leaf", "leaf", "raindrops"),
+        ("Photograph the rain clouds", "dark or grey rain clouds", "sky", "rain clouds"),
+        ("Find a hibiscus flower", "a hibiscus flower", "flower", "hibiscus"),
+        ("Spot a crow or a myna", "a crow or a myna bird", "animal", "crow or myna"),
+        ("Spot a coconut tree", "a coconut palm tree", "tree", "coconut tree"),
+    ],
+    "post-monsoon": [
+        ("Find bougainvillea in bloom", "bougainvillea flowers", "flower", "bougainvillea"),
+        ("Photograph some neem leaves", "neem tree leaves, thin and toothed", "leaf", "neem leaves"),
+        ("Spot a coconut tree", "a coconut palm tree", "tree", "coconut tree"),
+        ("Spot a crow or a myna", "a crow or a myna bird", "animal", "crow or myna"),
+        ("Photograph the clear, rain-washed sky", "a clear sky", "sky", "clear sky"),
+        ("Find a hibiscus flower", "a hibiscus flower", "flower", "hibiscus"),
+    ],
+    "tropical-winter": [
+        ("Find bougainvillea in bloom", "bougainvillea flowers", "flower", "bougainvillea"),
+        ("Photograph some neem leaves", "neem tree leaves, thin and toothed", "leaf", "neem leaves"),
+        ("Spot a coconut tree", "a coconut palm tree", "tree", "coconut tree"),
+        ("Spot a crow or a myna", "a crow or a myna bird", "animal", "crow or myna"),
+        ("Photograph the soft morning sky", "a pale or hazy sky", "sky", "soft sky"),
+        ("Find a hibiscus flower", "a hibiscus flower", "flower", "hibiscus"),
+    ],
+}
+SEASON_TASKS["wet"] = SEASON_TASKS["monsoon"]
+SEASON_TASKS["dry"] = SEASON_TASKS["tropical-summer"]
+RARE_TASKS |= {
+    "tropical-summer": [("Spot a parrot", "a parrot", "animal", "parrot"),
+                        ("Find a mango on a tree", "a mango hanging on a tree", "plant", "mango")],
+    "monsoon": [("Spot a rainbow", "a rainbow in the sky", "sky", "rainbow"),
+                ("Find a snail after the rain", "a snail", "animal", "snail")],
+    "post-monsoon": [("Spot a kingfisher", "a kingfisher bird", "animal", "kingfisher"),
+                     ("Spot a butterfly", "a butterfly", "animal", "butterfly")],
+    "tropical-winter": [("Spot a parrot", "a parrot", "animal", "parrot"),
+                        ("Spot a butterfly", "a butterfly", "animal", "butterfly")],
+}
+RARE_TASKS["wet"] = RARE_TASKS["monsoon"]
+RARE_TASKS["dry"] = RARE_TASKS["tropical-summer"]
+
+# No-location walks (location permission denied): only things that exist almost anywhere.
+NO_LOCATION_TASKS = [
+    ("Photograph the sky above you", "the sky, taking up most of the photo", "sky", "sky"),
+    ("Find some grass and photograph it", "grass", "ground", "grass"),
+    ("Photograph the road or path you're on", "a road, street, sidewalk or path", "ground", "road or path"),
+    ("Photograph a tree", "a tree", "tree", "tree"),
+    ("Photograph your shoes on the ground", "shoes or feet on the ground outdoors", "ground", "your shoes"),
+    ("Find a plant and photograph it", "a plant", "plant", "plant"),
+]
+NIGHT_SKY_TASK = ("Look up and photograph the night sky", "the night sky", "sky", "night sky")
+NO_LOCATION_LABELS = {t[3] for t in NO_LOCATION_TASKS} | {NIGHT_SKY_TASK[3]}
+
 # Feature words a task may only use if the place data backs them up.
 # (trigger words in the task, evidence words in the place data)
 FEATURE_GROUPS = [
@@ -179,6 +241,24 @@ def _task(t: tuple, **extra) -> dict:
             "place_specific": False, "rare": False, **extra}
 
 
+def season_key(ctx: dict) -> str:
+    """Task-bank key: tropical seasons have their own banks. Older stored quests only have "season"."""
+    return ctx.get("season_key") or ctx["season"]
+
+
+def _bank_for(ctx: dict, used: set[str], rare=False) -> list[dict]:
+    """Seasonal/common tasks for this quest, or the everyday-only bank for a no-location walk."""
+    night = ctx.get("night_quest")
+    if ctx.get("mode") == "no_location":
+        if rare:
+            return []
+        src = [t for t in NO_LOCATION_TASKS if not (night and t[2] == "sky")] + ([NIGHT_SKY_TASK] if night else [])
+        out = [_task(t) for t in src if t[3] not in used]
+        random.shuffle(out)
+        return out
+    return [b for b in _bank(season_key(ctx), used, rare) if not (night and b["category"] == "sky")]
+
+
 def _bank(season: str, used: set[str], rare=False) -> list[dict]:
     src = RARE_TASKS[season] if rare else SEASON_TASKS[season] + COMMON_TASKS
     out = [_task(t, rare=rare) for t in src if t[3] not in used]
@@ -210,10 +290,13 @@ def check_task(t: dict, ctx: dict, place: dict, used: set[str], recent: set[str]
     text = f"{t.get('prompt', '')} {t.get('verify', '')}"
     label = (t.get("type_label") or "").lower().strip()
     from_here = ctx.get("mode") == "from_here"
+    no_location = ctx.get("mode") == "no_location"
     if is_unsafe(text):
         return None, f"dropped unsafe task: {t['prompt']}"
     if from_here and NO_DESTINATION.search(text):
         return None, f"dropped destination task on a walk from here: {t['prompt']}"
+    if no_location and label not in NO_LOCATION_LABELS:
+        return None, f"dropped task that isn't an everyday find (no-location walk): {t['prompt']}"
     bad = unsupported_features(text, place)
     if bad:
         return None, f"dropped task with invented feature {bad}: {t['prompt']}"
@@ -221,24 +304,25 @@ def check_task(t: dict, ctx: dict, place: dict, used: set[str], recent: set[str]
         return None, f"dropped daytime sky task at night: {t['prompt']}"
     if label and (label in recent or label in used):
         return None, f"dropped repeated task type '{label}'"
-    specific = bool(t.get("place_specific")) and not from_here
+    specific = bool(t.get("place_specific")) and not from_here and not no_location
     if specific and not place_features(place) and place["name"].lower() not in text.lower():
         specific = False
     return {"kind": "photo", "prompt": t["prompt"].strip(), "verify": (t.get("verify") or t["prompt"]).strip(),
             "category": t.get("category") if t.get("category") in CATEGORIES else "other",
             "type_label": label or "photo", "place_specific": specific,
-            "rare": bool(t.get("rare")) and ctx["difficulty"] == "hard"}, None
+            "rare": bool(t.get("rare")) and ctx["difficulty"] == "hard" and not no_location}, None
 
 
 def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
     """Validate and repair a Gemma quest. Returns the quest and the repairs made."""
-    difficulty, season = ctx["difficulty"], ctx["season"]
+    difficulty = ctx["difficulty"]
     n = TASK_COUNTS[difficulty]
     notes: list[str] = []
     recent = {r.lower() for r in ctx.get("recent_task_types", [])}
     used: set[str] = set()
     night = ctx.get("night_quest")
     from_here = ctx.get("mode") == "from_here"
+    no_location = ctx.get("mode") == "no_location"
 
     tasks = []
     for t in raw.get("tasks", []):
@@ -249,8 +333,8 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
             used.add((t.get("type_label") or "").lower().strip())
             tasks.append(task)
 
-    want_place = 0 if from_here else {"easy": 0, "medium": 1, "hard": 2}[difficulty]
-    want_rare = 1 if difficulty == "hard" else 0
+    want_place = 0 if (from_here or no_location) else {"easy": 0, "medium": 1, "hard": 2}[difficulty]
+    want_rare = 1 if difficulty == "hard" and not no_location else 0
     photo_slots = n - (1 if difficulty == "hard" else 0)
 
     for t in [t for t in tasks if t["rare"]][want_rare:]:
@@ -263,7 +347,7 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
         have_place += 1
         notes.append("added place-specific task")
     if want_rare and not any(t["rare"] for t in tasks):
-        bank = _bank(season, used | recent, rare=True)
+        bank = _bank_for(ctx, used | recent, rare=True)
         if bank:
             tasks.append(bank[0])
             used.add(bank[0]["type_label"])
@@ -272,14 +356,14 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
         idx = next((i for i in range(len(tasks) - 1, -1, -1)
                     if not tasks[i]["place_specific"] and not tasks[i]["rare"]), len(tasks) - 1)
         tasks.pop(idx)
-    bank = [b for b in _bank(season, used | recent) if not (night and b["category"] == "sky")]
+    bank = _bank_for(ctx, used | recent)
     while len(tasks) < photo_slots and bank:
         tasks.append(bank.pop(0))
         used.add(tasks[-1]["type_label"])
         notes.append("padded with seasonal task")
     # After several quests the "no repeats from the last 3 quests" rule can empty the bank.
     # A full quest matters more, so allow recent types again (still never twice in one quest).
-    bank = [b for b in _bank(season, used) if not (night and b["category"] == "sky")]
+    bank = _bank_for(ctx, used)
     while len(tasks) < photo_slots and bank:
         tasks.append(bank.pop(0))
         used.add(tasks[-1]["type_label"])
@@ -335,7 +419,11 @@ def mark_night(ctx: dict) -> dict:
 def fallback_quest(ctx: dict, place: dict) -> dict:
     """Used when Gemma is unreachable: a code-written quest from the same banks and rules."""
     title = {"fall": "An Autumn Wander", "winter": "A Winter Lookabout", "spring": "A Spring Ramble",
-             "summer": "A Summer Stroll"}[ctx["season"]]
+             "summer": "A Summer Stroll", "tropical-summer": "A Warm-Day Wander", "monsoon": "A Monsoon Stroll",
+             "post-monsoon": "A Post-Monsoon Ramble", "tropical-winter": "A Cool-Morning Walk",
+             "wet": "A Rainy-Season Stroll", "dry": "A Dry-Season Wander"}.get(season_key(ctx), "A Walk Outside")
+    if ctx.get("mode") == "no_location":
+        title = "An Everyday Wander"
     raw = {"title": title, "spoken_intro": "", "deadline_minutes": DEFAULT_DEADLINE[ctx["difficulty"]], "tasks": []}
     if ctx.get("time_of_day") == "evening" and not ctx.get("night_quest"):
         raw["tasks"].append({"prompt": "Catch the evening sky before sunset", "verify": "the sky at sunset or dusk",
@@ -351,7 +439,7 @@ async def swap_task(ctx: dict, place: dict, old: dict, others: list[dict], attem
     """One replacement task with the quest's own context and every rule. Returns (task, source, notes).
     Never repeats a task type already in this quest (including the one being swapped out)."""
     used = {(t.get("type_label") or "").lower() for t in others + [old]}
-    need_specific = bool(old.get("place_specific")) and ctx.get("mode") != "from_here"
+    need_specific = bool(old.get("place_specific")) and ctx.get("mode") not in ("from_here", "no_location")
     need_rare = bool(old.get("rare"))
     asks = []
     if need_specific:
@@ -360,6 +448,9 @@ async def swap_task(ctx: dict, place: dict, old: dict, others: list[dict], attem
         asks.append("It must be a rare find (rare=true) that might not be possible this time of year.")
     if ctx.get("mode") == "from_here":
         asks.append("This is a walk from home with no destination: no parks, trails, lakes or landmarks.")
+    if ctx.get("mode") == "no_location":
+        asks.append("The walker's location is unknown: use only one of these everyday type_labels: "
+                    f"{sorted(NO_LOCATION_LABELS - used)}.")
     facts = {k: v for k, v in ctx.items() if k not in ("sunset_ts", "repairs")}
     facts["place"] = {k: v for k, v in ctx.get("place", {}).items() if k not in ("lat", "lng")}
     prompt = (f"FACTS:\n{json.dumps(facts, indent=1)}\n\n"
@@ -395,11 +486,10 @@ def _swap_fallback(ctx: dict, place: dict, used: set[str], need_specific: bool, 
             t = _place_task(place, k)
             if t["type_label"] not in used:
                 return t
-    pools = ([_bank(ctx["season"], used, rare=True)] if need_rare else []) + [_bank(ctx["season"], used)]
+    pools = ([_bank_for(ctx, used, rare=True)] if need_rare else []) + [_bank_for(ctx, used)]
     for pool in pools:
         for t in pool:
-            if not (night and t["category"] == "sky"):
-                return t | {"rare": need_rare}
+            return t | {"rare": need_rare and bool(pool and pool[0].get("rare"))}
     return _task(("Find something that makes you smile", "an outdoor scene", "other", "smile find"), rare=need_rare)
 
 
@@ -428,6 +518,13 @@ async def generate(ctx: dict, place: dict, attempts: int = 2) -> tuple[dict, str
                                 "could spot on a neighborhood walk (sky, trees, leaves, plants, stones, birds). "
                                 "No place-specific tasks: place_specific must be false, and never mention parks, lakes, "
                                 "trails or any landmark.")
+    if ctx.get("mode") == "no_location":
+        k = n - 1 if ctx["difficulty"] == "hard" else n
+        rules = (f"Write {k} photo tasks for a walk where the walker's location is unknown. Use ONLY everyday things "
+                 "that exist almost anywhere, one task each: the sky, grass, a road or path, a tree, your shoes on "
+                 "the ground, a plant. Set type_label to exactly one of: sky, grass, road or path, tree, your shoes, "
+                 "plant (at night use 'night sky' instead of 'sky'). place_specific=false and rare=false. "
+                 "Add season or time-of-day flavor in the wording only.")
     facts = {k: v for k, v in ctx.items() if k != "sunset_ts"} | {"place": {k: v for k, v in ctx["place"].items() if k not in ("lat", "lng")}}
     prompt = (f"FACTS:\n{json.dumps(facts, indent=1)}\n\n{rules}\n"
               f"Suggest deadline_minutes around {DEFAULT_DEADLINE[ctx['difficulty']]}.")
