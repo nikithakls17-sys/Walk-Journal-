@@ -431,7 +431,7 @@ def fallback_quest(ctx: dict, place: dict) -> dict:
     return enforce_rules(raw, ctx, place)[0]
 
 
-SWAP_LIMITS = {"easy": 1, "medium": 2, "hard": 2}  # separate from the Hard rare-find skip
+SWAP_LIMITS = {"easy": 2, "medium": 3, "hard": 3}  # separate from the Hard rare-find skip (raised after testing)
 TASK_SCHEMA = QUEST_SCHEMA["properties"]["tasks"]["items"]
 
 

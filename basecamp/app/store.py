@@ -112,8 +112,9 @@ def away_progress(q: dict) -> tuple[float, bool]:
 
 
 def needed_for(total: int) -> int:
-    """Tasks needed to complete a walk: 75%, rounded up (3 of 4, 4 of 5, 6 of 7)."""
-    return math.ceil(PASS_SHARE * total) if total else 0
+    """Tasks needed to complete a walk: 75%, rounded to the nearest whole task (halves round up):
+    2 of 3, 3 of 4, 4 of 5, 5 of 6, 5 of 7. Computed on the fly, so stored walks are never rewritten."""
+    return max(1, math.floor(PASS_SHARE * total + 0.5)) if total else 0
 
 
 def progress(q: dict, tasks: list[dict] | None = None) -> dict:

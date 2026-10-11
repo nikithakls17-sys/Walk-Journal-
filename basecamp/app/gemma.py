@@ -9,6 +9,9 @@ import httpx
 from . import config, tracing
 
 
+KEEP_ALIVE = "2h"
+
+
 class GemmaError(RuntimeError):
     pass
 
@@ -29,6 +32,7 @@ async def chat(prompt: str, schema: dict, *, system: str | None = None, images: 
         "messages": messages,
         "format": schema,
         "think": False,  # gemma4 thinks by default: slow on a laptop, and the reply sometimes ignored the schema
+        "keep_alive": KEEP_ALIVE,  # stay loaded between requests; reloading took ~80 s in testing
         "stream": False,
         "options": {"temperature": temperature},
     }
