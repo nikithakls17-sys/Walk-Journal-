@@ -1,0 +1,21 @@
+file,prompt,verify,category,expected
+red_leaf.jpg,Find a red leaf,a leaf that is mostly red,leaf,accept
+yellow_leaf.jpg,Find a yellow leaf,a leaf that is mostly yellow,leaf,accept
+sky_clear.jpg,Photograph the sky above you,"the sky, taking up most of the photo",sky,accept
+sky_sunset.jpg,Catch the evening sky before sunset,the sky at sunset or dusk,sky,accept
+lake.jpg,Photograph the lake from the shoreline,a lake or pond with visible water,water,accept
+stone.jpg,Find a stone you like and photograph it,"a stone or rock, close up",stone,accept
+acorn.jpg,Find an acorn,an acorn,plant,accept
+pinecone.jpg,Find a pinecone,a pinecone,plant,accept
+tall_tree.jpg,Photograph the tallest tree you can see,a tree with its trunk or canopy visible,tree,accept
+hand_grass.jpg,Touch the grass: take a photo of your hand on it,a hand touching grass,ground,accept
+changed_tree.jpg,Spot a tree that has changed color,"a tree with orange, red, or yellow leaves",tree,accept
+leaf_pile.jpg,Photograph a pile of fallen leaves,fallen leaves on the ground,leaf,accept
+leaf_for_acorn.jpg,Find an acorn,an acorn,plant,reject
+green_leaf_for_red.jpg,Find a red leaf,a leaf that is mostly red,leaf,reject
+indoor_for_sky.jpg,Photograph the sky above you,"the sky, taking up most of the photo",sky,reject
+screen_of_lake.jpg,Photograph the lake from the shoreline,a lake or pond with visible water,water,reject
+blurry.jpg,Find a stone you like and photograph it,"a stone or rock, close up",stone,reject
+dark.jpg,Find a pinecone,a pinecone,plant,reject
+grass_for_lake.jpg,Photograph the lake from the shoreline,a lake or pond with visible water,water,reject
+pavement_for_stone.jpg,Find a pinecone,a pinecone,plant,reject
