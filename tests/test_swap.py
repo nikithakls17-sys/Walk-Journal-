@@ -53,32 +53,34 @@ def swap(q, task_id):
 def test_swap_replaces_task_in_place_with_new_id_and_counts_down(monkeypatch):
     gemma_writes(monkeypatch, task("Find a heart-shaped leaf", "heart leaf"))
     q = make_quest("easy")
-    assert q["swaps_left"] == 1
+    assert q["swaps_left"] == 2
     r = swap(q, "t2").json()
-    assert r["swap"]["source"] == "gemma" and r["swaps_left"] == 0
+    assert r["swap"]["source"] == "gemma" and r["swaps_left"] == 1
     assert r["tasks"][1]["prompt"] == "Find a heart-shaped leaf"
     assert r["tasks"][1]["id"] not in {"t1", "t2", "t3"} and r["tasks"][1]["status"] == "todo"
     assert [t["id"] for t in r["tasks"]][0] == "t1" and len(r["tasks"]) == 3
-    assert swap(q, "t1").status_code == 400  # Easy: 1 swap
+    assert swap(q, "t1").status_code == 200  # Easy: 2 swaps
+    assert swap(q, "t3").status_code == 400
 
 
-@pytest.mark.parametrize("difficulty,limit", [("easy", 1), ("medium", 2), ("hard", 2)])
+@pytest.mark.parametrize("difficulty,limit", [("easy", 2), ("medium", 3), ("hard", 3)])
 def test_swap_limits(monkeypatch, difficulty, limit):
     gemma_writes(monkeypatch, *[task(f"Find thing {i}", f"thing {i}") for i in range(3)])
     q = make_quest(difficulty)
     assert q["swaps_left"] == limit
-    ids = plain_ids(q)
+    ids = plain_ids(q)[:limit]
     for i in range(limit):
         r = swap(q, ids[i]).json()
         assert r["swap"]["source"] == "gemma"
-    assert swap(q, ids[limit]).status_code == 400
+    untouched = next(t["id"] for t in q["tasks"] if t["kind"] == "photo" and t["id"] not in ids)
+    assert swap(q, untouched).status_code == 400
 
 
 def test_hard_swaps_are_separate_from_the_rare_skip(monkeypatch):
     gemma_writes(monkeypatch, task("Find a seed pod", "seed pod"))
     q = make_quest("hard")
     r = swap(q, plain_ids(q)[0]).json()
-    assert r["swaps_left"] == 1 and r["skips_left"] == 1
+    assert r["swaps_left"] == 2 and r["skips_left"] == 1
 
 
 def test_swap_rejects_invented_feature_and_falls_back(monkeypatch):

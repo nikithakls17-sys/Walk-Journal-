@@ -124,8 +124,8 @@ def test_no_location_photo_skips_place_and_says_place_not_confirmed(monkeypatch)
 
 # ---------- 3: 75% completes a walk; below that it's a partial walk ----------
 
-def test_needed_is_75_percent_rounded_up():
-    assert [store.needed_for(n) for n in (3, 4, 5, 7)] == [3, 3, 4, 6]
+def test_needed_is_75_percent_rounded_to_nearest():
+    assert [store.needed_for(n) for n in (3, 4, 5, 6, 7)] == [2, 3, 4, 5, 5]
 
 
 def test_partial_walk_saves_to_journal_and_map_but_earns_nothing(monkeypatch):
