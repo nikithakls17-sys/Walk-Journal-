@@ -47,6 +47,7 @@ class Settings(BaseModel):
     notify_journal: bool = False
     journal_time: str = "20:00"
     notify_quest: bool = False
+    weekly_goal: int = 3  # walks a week; gentle, never a streak
 
 
 @app.get("/api/health")
@@ -66,6 +67,8 @@ def save_settings(s: Settings):
     for t in (s.daily_time, s.journal_time):
         if not reminders.valid_hhmm(t):
             raise HTTPException(400, "times must look like 17:00")
+    if not 1 <= s.weekly_goal <= 7:
+        raise HTTPException(400, "weekly goal must be 1 to 7 walks")
     db.set_setting("settings", s.model_dump())
     return s
 
@@ -158,8 +161,10 @@ def map_data():
         if not p:
             continue
         v = visited.setdefault(p["id"], {**p, "visits": []})
+        full = store.get_quest(q["id"])
         v["visits"].append({"quest_id": q["id"], "title": q["title"], "date": q["finished_at"],
-                            "photos": photos_by_quest.get(q["id"], [])[:4]})
+                            "photos": photos_by_quest.get(q["id"], [])[:4],
+                            "partial": not store.progress(full)["completed"]})
         if q["started_at"] and q["finished_at"]:
             outside += max(0, q["finished_at"] - q["started_at"])
     suggested = [p for pid, p in all_places.items()
@@ -182,7 +187,7 @@ def from_here_radius_m(tier: str) -> float:
 class NewQuest(BaseModel):
     mode: str = "place"  # "place" (go to a destination) or "from_here" (a walk around home)
     place_id: str | None = None
-    lat: float | None = None  # start point, for mode=from_here
+    lat: float | None = None  # from_here: start point. no_location: the walker's saved home (season/sunset only)
     lng: float | None = None
     distance_tier: str = "nearby"
     difficulty: str = "easy"
@@ -213,13 +218,21 @@ async def create_quest(req: NewQuest):
         place = home_walks_place(req.lat, req.lng)
         gen_place = quests.home_place(req.lat, req.lng)  # what Gemma sees: no destination, no features
         start, away_goal = (req.lat, req.lng), AWAY_GOAL_M[req.difficulty]
+    elif req.mode == "no_location":
+        # Location permission denied: everyday tasks only, no place check. The saved home (if any) only
+        # sets the season and sunset; it is never used to check photos.
+        s = db.get_setting("settings", {}) or {}
+        lat = req.lat if req.lat is not None else s.get("home_lat", 39.0)
+        lng = req.lng if req.lng is not None else s.get("home_lng", -95.0)
+        place = home_walks_place(lat, lng)
+        gen_place, start, away_goal = quests.home_place(lat, lng), (None, None), 0
     elif req.mode == "place":
         place = store.get_place(req.place_id or "")
         if not place:
             raise HTTPException(404, "unknown place")
         gen_place, start, away_goal = place, (None, None), 0
     else:
-        raise HTTPException(400, "mode must be place or from_here")
+        raise HTTPException(400, "mode must be place, from_here or no_location")
     ctx = context.build(gen_place, req.distance_tier, req.difficulty, req.tz, store.recent_task_types())
     ctx["mode"] = req.mode
     quest, source, notes = await quests.generate(ctx, gen_place)
@@ -235,13 +248,7 @@ async def create_quest(req: NewQuest):
     return quest_view(qid)
 
 
-def away_progress(q: dict) -> tuple[float, bool]:
-    """(farthest verified photo from the start in meters, whether the away goal is met)."""
-    caps = [c for c in store.captures_for(q["id"])
-            if c["kind"] == "photo" and c["status"] in ("pass", "self") and c.get("distance_m") is not None]
-    farthest = max((c["distance_m"] for c in caps), default=0.0)
-    goal = q.get("away_goal_m") or 0
-    return farthest, farthest >= goal
+away_progress = store.away_progress
 
 
 def quest_view(qid: str) -> dict:
@@ -252,6 +259,7 @@ def quest_view(qid: str) -> dict:
     tasks = store.task_states(q)
     ctx = q["context"] or {}
     farthest, away_met = away_progress(q)
+    prog = store.progress(q, tasks)
     return {
         "id": q["id"], "title": q["title"], "spoken_intro": q["spoken_intro"], "status": q["status"],
         "difficulty": q["difficulty"], "distance_tier": q["distance_tier"], "source": q["source"],
@@ -266,6 +274,7 @@ def quest_view(qid: str) -> dict:
         "radius_m": from_here_radius_m(q["distance_tier"]) if q.get("mode") == "from_here" else None,
         "away_goal_m": q.get("away_goal_m") or 0, "farthest_m": round(farthest), "away_met": away_met,
         "requirement_met": q.get("requirement_met"), "swaps_left": swaps_left(q),
+        "progress": prog, "completed": prog["completed"], "partial": q["status"] == "done" and not prog["completed"],
     }
 
 
@@ -352,6 +361,26 @@ def skip_task(qid: str, s: Skip):
 
 # ---------- captures ----------
 
+# Photos whose check is running right now. A phone sync asks to retry every pending photo; without this,
+# a photo still being checked was checked again in parallel (one photo got ~9 Gemma calls in testing).
+CHECKING: set[str] = set()
+GALLERY_RECENT_S = 15 * 60  # a gallery photo taken in the last 15 minutes counts as "now"
+NO_TIME_MESSAGE = ("Your phone removed this photo's time and location for privacy. It still counts, "
+                   "but to get a full ✓, use Take photo.")
+
+
+async def check_once(cid: str, extra: dict | None = None) -> bool:
+    """Run a photo's checks unless they're already running. Returns False if skipped."""
+    if cid in CHECKING:
+        return False
+    CHECKING.add(cid)
+    try:
+        await run_checks(cid, extra)
+        return True
+    finally:
+        CHECKING.discard(cid)
+
+
 USER_MESSAGES = {
     "too_dark": "That one's too dark for me to see. Try a retake in better light.",
     "too_bright": "That one's washed out. Try a retake facing away from the sun.",
@@ -364,7 +393,7 @@ async def add_capture(qid: str, task_id: str = Form(...), client_id: str = Form(
                       lat: float | None = Form(None), lng: float | None = Form(None),
                       accuracy: float | None = Form(None), source: str = Form("camera"),
                       file_modified: float | None = Form(None), photo: UploadFile = File(...),
-                      background: BackgroundTasks = None):
+                      background: BackgroundTasks = None, request: Request = None):
     existing = store.get_capture(client_id)
     if existing:
         return store.public_capture(existing)
@@ -376,14 +405,27 @@ async def add_capture(qid: str, task_id: str = Form(...), client_id: str = Form(
     if len(raw) > 15 * 1024 * 1024:
         raise HTTPException(413, "photo too large")
     taken = taken_at / 1000 if taken_at > 1e11 else taken_at  # accept ms or s
-    proof = "live"
+    proof = "no_location" if q.get("mode") == "no_location" else "live"
+    exif_time = exif_gps = None
     if source == "gallery" and task["kind"] == "photo":
-        # Time and place come from the photo itself, never from where the phone is now.
+        # Time comes from the photo's EXIF. Place comes from the photo's EXIF GPS if it has one, otherwise from
+        # the phone's live GPS at upload (sent with the upload). No EXIF time means nothing can be confirmed.
         meta = verify.read_exif(raw, context.tzinfo(q["tz"]))
-        if meta["taken_at"] is not None and meta["lat"] is not None:
+        exif_time, exif_gps = int(meta["taken_at"] is not None), int(meta["lat"] is not None)
+        if q.get("mode") == "no_location":
+            proof = "time_only" if exif_time else "none"
+            taken = meta["taken_at"] or taken
+            lat = lng = accuracy = None
+        elif exif_time and exif_gps:
             proof, taken, lat, lng, accuracy = "exif", meta["taken_at"], meta["lat"], meta["lng"], meta["accuracy"]
+        elif exif_time and lat is not None and lng is not None:
+            proof, taken = "gallery_live", meta["taken_at"]
+        elif exif_time:
+            proof, taken, lat, lng, accuracy = "time_only", meta["taken_at"], None, None, None
         else:
             proof, lat, lng, accuracy = "none", None, None, None
+    elif q.get("mode") == "no_location":
+        lat = lng = accuracy = None
     try:
         jpeg, img = verify.clean_image(raw)  # EXIF (incl. GPS) is gone from here on
     except Exception:
@@ -391,13 +433,19 @@ async def add_capture(qid: str, task_id: str = Form(...), client_id: str = Form(
     cid = db.new_id()
     fname = f"{cid}.jpg"
     (config.PHOTO_DIR / fname).write_bytes(jpeg)
-    with db.tx() as c:
-        c.execute("""INSERT INTO captures (id, client_id, quest_id, task_id, kind, photo, taken_at, lat, lng, accuracy,
-                     source, status, created_at, proof) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                  (cid, client_id, qid, task_id, task["kind"], fname, taken, lat, lng, accuracy, source,
-                   "pending", db.now(), proof))
-    extra = {"file_modified": file_modified / 1000 if file_modified and file_modified > 1e11 else file_modified}
-    await run_checks(cid, extra)
+    ua =(request.headers.get("user-agent", "") if request is not None else "")[:300]
+    CHECKING.add(cid)  # claimed before the row exists, so a sync can't start a second check
+    try:
+        with db.tx() as c:
+            c.execute("""INSERT INTO captures (id, client_id, quest_id, task_id, kind, photo, taken_at, lat, lng, accuracy,
+                         source, status, created_at, proof, exif_time, exif_gps, user_agent)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (cid, client_id, qid, task_id, task["kind"], fname, taken, lat, lng, accuracy, source,
+                       "pending", db.now(), proof, exif_time, exif_gps, ua))
+        extra = {"file_modified": file_modified / 1000 if file_modified and file_modified > 1e11 else file_modified}
+        await run_checks(cid, extra)
+    finally:
+        CHECKING.discard(cid)
     if background is not None:
         background.add_task(push_quest_progress, qid)
     return store.public_capture(store.get_capture(cid))
@@ -429,15 +477,43 @@ async def run_checks(cid: str, extra: dict | None = None):
         status = verify.decide_content(g)
         if status == "pass":
             status = "unconfirmed"
-        note = "This gallery photo has no time or location info, so only what's in it was checked."
         reason = {
-            "unconfirmed": f"{g.get('what_i_see', '')} {note}".strip(),
+            "unconfirmed": NO_TIME_MESSAGE,
             "fail": f"I see {g.get('what_i_see', 'something else')}. {g.get('reason', '')}".strip(),
             "unsure": f"Couldn't tell. {g.get('what_i_see', '')}".strip(),
             "pending": "Saved. Gemma will check it when Base Camp is reachable.",
         }[status]
         store.update_capture(cid, status=status, place_ok=None, time_ok=None, quality=qual, gemma=g, reason=reason,
                              verified_at=None if status == "pending" else time.time())
+        return
+
+    gallery = c["source"] == "gallery"
+
+    def time_check() -> bool:
+        ok = verify.check_time(c["taken_at"], q, c["created_at"])
+        if not ok and gallery:  # gallery: inside the quest window, or taken in the last 15 minutes
+            ok = -verify.TIME_GRACE_S <= c["created_at"] - c["taken_at"] <= GALLERY_RECENT_S
+        return ok
+
+    if c.get("proof") in ("no_location", "time_only") or q.get("mode") == "no_location":
+        # Place can't be confirmed (location off, or a gallery photo with a time but no GPS): check time and content.
+        time_ok = time_check()
+        if not time_ok:
+            store.update_capture(cid, status="fail", place_ok=None, time_ok=0, quality=qual, verified_at=time.time(),
+                                 reason="This photo was taken outside the quest time window.")
+            return
+        g = await verify.check_content(jpeg, task)
+        status = verify.decide_content(g)
+        why = ("location is off, so only the time and what's in the photo were checked." if c.get("proof") == "no_location"
+               else "this photo has a time but no location, so only the time and what's in it were checked.")
+        reason = {
+            "pass": f"{g.get('what_i_see', '')} Place not confirmed: {why}".strip(),
+            "fail": f"I see {g.get('what_i_see', 'something else')}. {g.get('reason', '')}".strip(),
+            "unsure": f"Couldn't tell. {g.get('what_i_see', '')}".strip(),
+            "pending": "Saved. Gemma will check it when Base Camp is reachable.",
+        }[status]
+        store.update_capture(cid, status="unconfirmed" if status == "pass" else status, place_ok=None, time_ok=1,
+                             quality=qual, gemma=g, reason=reason, verified_at=None if status == "pending" else time.time())
         return
 
     if q.get("mode") == "from_here":
@@ -447,7 +523,7 @@ async def run_checks(cid: str, extra: dict | None = None):
     else:
         place = store.get_place(q["place_id"])
     place_ok, dist = verify.check_place(c["lat"], c["lng"], c["accuracy"], place)
-    time_ok = verify.check_time(c["taken_at"], q, c["created_at"])
+    time_ok = time_check()
     fm = (extra or {}).get("file_modified")
     if c["source"] == "input" and fm and fm < c["taken_at"] - verify.TIME_GRACE_S:
         time_ok = False
@@ -455,13 +531,16 @@ async def run_checks(cid: str, extra: dict | None = None):
     if not place_ok:
         if dist is None:
             reason = "No GPS fix with this photo, so I can't confirm the place."
+        elif c.get("proof") == "gallery_live":
+            reason = (f"You uploaded this {dist / M_PER_MI:.1f} mi from the walk's area. Gallery photos are placed by "
+                      "your phone's location when you upload them, so upload while you're still out.")
         elif q.get("mode") == "from_here":
             reason = (f"This was taken {dist / M_PER_MI:.1f} mi from where you started. "
                       f"This walk stays within {tier_mi:g} mi, so head back a little and try again.")
         else:
             reason = f"This was taken {dist} m from {place['name']}. Head a little closer and try again."
     elif not time_ok:
-        reason = ("This gallery photo was taken outside the quest time window." if c.get("proof") == "exif"
+        reason = ("This gallery photo was taken outside the quest time window." if gallery
                   else "This photo was taken outside the quest time window.")
     if reason:
         store.update_capture(cid, status="fail", place_ok=int(place_ok), time_ok=int(time_ok), quality=qual,
@@ -484,7 +563,7 @@ async def run_checks(cid: str, extra: dict | None = None):
 async def retry_capture(cid: str):
     c = store.get_capture(cid) or _404()
     if c["status"] == "pending":
-        await run_checks(c["id"])
+        await check_once(c["id"])
     return store.public_capture(store.get_capture(c["id"]))
 
 
@@ -492,11 +571,12 @@ async def retry_capture(cid: str):
 async def retry_pending(background: BackgroundTasks):
     with db.tx() as conn:
         rows = conn.execute("SELECT id, quest_id FROM captures WHERE status='pending'").fetchall()
-    for r in rows:
-        await run_checks(r["id"])
-    for qid in {r["quest_id"] for r in rows}:
+    retried = [r for r in rows if r["id"] not in CHECKING]  # never a second check of a photo in progress
+    for r in retried:
+        await check_once(r["id"])
+    for qid in {r["quest_id"] for r in retried}:
         background.add_task(push_quest_progress, qid)
-    return {"retried": len(rows)}
+    return {"retried": len(retried), "already_checking": len(rows) - len(retried)}
 
 
 @app.post("/api/captures/{cid}/self-confirm")
@@ -504,7 +584,8 @@ def self_confirm(cid: str, background: BackgroundTasks):
     c = store.get_capture(cid) or _404()
     if c["status"] not in ("unsure", "pending"):
         raise HTTPException(400, "only photos Gemma couldn't judge can be self-confirmed")
-    if c["kind"] == "photo" and not (c["place_ok"] and c["time_ok"]):
+    place_by_design = c.get("proof") in ("no_location", "time_only")
+    if c["kind"] == "photo" and not (c["time_ok"] and (c["place_ok"] or place_by_design)):
         raise HTTPException(400, "place and time checks must pass first")
     store.update_capture(c["id"], status="self", reason="You confirmed this one yourself.", verified_at=time.time())
     background.add_task(push_quest_progress, c["quest_id"])
@@ -540,13 +621,15 @@ def finish_quest(qid: str, f: Finish):
         q = store.get_quest(qid)
     tasks = store.task_states(q)
     _, met = away_progress(q)  # Medium/Hard walks from here only count if you actually walked away from the start
+    prog = store.progress(q, tasks)  # 75% of tasks (rounded up) completes the walk; below that it's a partial walk
     store.update_quest(qid, finished_at=q["finished_at"] or finished, status="done", note=f.note, mood=f.mood,
                        screen_seconds=f.screen_seconds if f.screen_seconds is not None else q["screen_seconds"],
-                       points=points_for(tasks) if met else 0, requirement_met=int(met))
+                       points=points_for(tasks) if prog["completed"] else 0, requirement_met=int(met),
+                       completed=int(prog["completed"]))
     view = quest_view(qid)
     view["outside_seconds"] = (view["finished_at"] or now) - view["started_at"]
-    view["new_badges"] = badges.evaluate(qid) if not q["finished_at"] and met else []
-    view["streak"] = badges.current_streak()
+    view["new_badges"] = badges.evaluate(qid) if not q["finished_at"] and prog["completed"] else []
+    view["week"] = badges.week_progress()
     return view
 
 
@@ -594,19 +677,21 @@ def journal():
         qs = db.rows(c.execute("SELECT id FROM quests WHERE status='done' ORDER BY finished_at DESC").fetchall())
         earned_by_quest: dict[str, list] = {}
         for r in c.execute("SELECT code, quest_id FROM badges").fetchall():
-            earned_by_quest.setdefault(r["quest_id"], []).append(badges.describe(r["code"]))
+            b = badges.describe(r["code"])  # retired badges (old daily streaks) stay stored but aren't shown
+            if b:
+                earned_by_quest.setdefault(r["quest_id"], []).append(b)
     entries = []
     for row in qs:
         v = quest_view(row["id"])
         v["outside_seconds"] = (v["finished_at"] or 0) - (v["started_at"] or 0)
         v["badges"] = earned_by_quest.get(row["id"], [])
         entries.append(v)
-    return {"entries": entries, "streak": badges.current_streak()}
+    return {"entries": entries, "week": badges.week_progress()}
 
 
 @app.get("/api/badges")
 def all_badges():
-    return {"badges": badges.all_badges(), "streak": badges.current_streak()}
+    return {"badges": badges.all_badges(), "week": badges.week_progress()}
 
 
 def _404():
