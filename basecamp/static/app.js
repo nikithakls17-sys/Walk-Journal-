@@ -127,21 +127,37 @@ $("#setup-save").onclick = async () => {
   }
 };
 async function saveHome(lat, lng, city) {
-  const s = { home_lat: lat, home_lng: lng, home_city: city, units: "mi" };
-  store.set("settings", s);
-  try { await api("/api/settings", { json: s }); } catch {}
+  await saveSettings({ home_lat: lat, home_lng: lng, home_city: city, units: "mi" });
   location.hash = "home";
   route();
 }
 
+// Settings live on the phone (works offline) and on Base Camp (survives reinstalling the app).
+async function saveSettings(changes) {
+  const s = { auto_read: false, ...store.get("settings", {}), ...changes };
+  store.set("settings", s);
+  try { await api("/api/settings", { json: s }); } catch {}
+  return s;
+}
+async function loadSettings() {
+  try {
+    const remote = await api("/api/settings");
+    const local = store.get("settings", {});
+    if (remote.home_lat != null && local.auto_read === undefined) store.set("settings", { ...remote, ...local, auto_read: remote.auto_read });
+  } catch {}
+}
+const autoRead = () => !!store.get("settings", {}).auto_read;
+
 // ---------- home ----------
 
 views.home = () => {
+  $("#auto-read").checked = autoRead();
   const q = store.get("quest");
   $("#resume").hidden = !(q && !q.finished_at);
   if (q) $("#resume-title").textContent = q.title;
 };
 $("#resume-btn").onclick = () => resumeQuest();
+$("#auto-read").onchange = (e) => saveSettings({ auto_read: e.target.checked });
 const choice = (name) => document.querySelector(`input[name=${name}]:checked`).value;
 
 $("#walk-here").onclick = async () => {
@@ -289,7 +305,7 @@ $("#intro-start").onclick = async () => {
   quest.deadline_at = quest.deadline_at || startedAt + quest.deadline_minutes * 60;
   store.set("quest", quest);
   screenTime.start();
-  speak(quest);
+  if (autoRead()) speak(quest);
   show("away");
   await Outbox.add({ kind: "start", questId: quest.id, body: { started_at: startedAt } });
   sync();
@@ -336,6 +352,7 @@ function speakBrowser(q) {
   speechSynthesis.speak(u);
 }
 $("#away-replay").onclick = () => speak(quest);
+$("#intro-read").onclick = () => speak(quest);
 
 // ---------- screen time (Page Visibility API) ----------
 
@@ -366,9 +383,9 @@ window.addEventListener("pagehide", () => screenTime.flush());
 
 // ---------- phone away / tasks ----------
 
-const STATUS_ICON = { todo: "○", pass: "✓", self: "✋", unsure: "?", pending: "⏳", retake: "↺", fail: "✗", skipped: "→", queued: "⏳" };
-const STATUS_TEXT = { todo: "", pass: "verified", self: "self-confirmed", unsure: "couldn't tell", pending: "waiting for Base Camp",
-  retake: "retake", fail: "not yet", skipped: "skipped", queued: "saved, will sync" };
+const STATUS_ICON = { todo: "○", pass: "✓", self: "✋", unconfirmed: "◐", unsure: "?", pending: "⏳", retake: "↺", fail: "✗", skipped: "→", queued: "⏳" };
+const STATUS_TEXT = { todo: "", pass: "verified", self: "self-confirmed", unconfirmed: "time/place not confirmed", unsure: "couldn't tell",
+  pending: "waiting for Base Camp", retake: "retake", fail: "not yet", skipped: "skipped", queued: "saved, will sync" };
 
 views.away = () => {
   watchGps();
@@ -422,7 +439,9 @@ function renderTasks() {
     const done = ["pass", "self", "skipped"].includes(st);
     const actions = [];
     if (!done && st !== "queued") {
-      actions.push(`<button class="btn small" data-act="${t.kind === "tracker" ? "tracker" : "snap"}" data-id="${t.id}">${t.kind === "tracker" ? "Add screenshot" : t.attempts ? "Retake" : "Snap"}</button>`);
+      if (t.kind === "tracker") actions.push(`<button class="btn small" data-act="tracker" data-id="${t.id}">Add screenshot</button>`);
+      else actions.push(`<button class="btn small" data-act="snap" data-id="${t.id}">Take photo</button>`,
+        `<button class="btn small ghost" data-act="gallery" data-id="${t.id}">Choose from gallery</button>`);
       if (st === "unsure" && t.capture) actions.push(`<button class="btn small ghost" data-act="self" data-cid="${t.capture.id}">It's right</button>`);
       if (quest.skips_left > 0 && quest.difficulty === "hard") actions.push(`<button class="btn small ghost" data-act="skip" data-id="${t.id}">Skip</button>`);
     }
@@ -440,6 +459,7 @@ $("#task-list").onclick = async (e) => {
   const { act, id, cid } = b.dataset;
   if (act === "snap") openCamera(quest.tasks.find((t) => t.id === id));
   if (act === "tracker") pickTracker(id);
+  if (act === "gallery") pickGallery(id);
   if (act === "self") {
     try { await api(`/api/captures/${cid}/self-confirm`, { method: "POST" }); await refreshQuest(); } catch (err) { toast(err.message); }
   }
@@ -501,6 +521,19 @@ $("#cam-fallback").onchange = async (e) => {
   const takenAt = Date.now();
   const fix = await getFix();
   submitCapture({ task: camTask, blob: file, takenAt, fix, source: "input", fileModified: file.lastModified });
+};
+
+let galleryTaskId = null;
+function pickGallery(id) {
+  galleryTaskId = id;
+  $("#gallery-input").value = "";
+  $("#gallery-input").click();
+}
+$("#gallery-input").onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  // Sent with its EXIF intact; Base Camp reads the time + GPS, then strips them before saving.
+  submitCapture({ task: quest.tasks.find((t) => t.id === galleryTaskId), blob: file, takenAt: Date.now(), fix: null, source: "gallery" });
 };
 
 let trackerTaskId = null;
@@ -716,6 +749,7 @@ function buildGrass() {
 // ---------- boot ----------
 
 buildGrass();
+loadSettings();
 quest = store.get("quest");
 route();
 sync();

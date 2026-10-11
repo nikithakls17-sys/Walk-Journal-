@@ -27,6 +27,7 @@ class Settings(BaseModel):
     home_lng: float | None = None
     home_city: str | None = None
     units: str = "mi"
+    auto_read: bool = False  # read the quest aloud as soon as it starts (off by default)
 
 
 @app.get("/api/health")
@@ -38,7 +39,7 @@ async def health():
 
 @app.get("/api/settings")
 def get_settings():
-    return db.get_setting("settings", Settings().model_dump())
+    return Settings(**(db.get_setting("settings") or {})).model_dump()
 
 
 @app.post("/api/settings")
@@ -90,7 +91,7 @@ def map_data():
         done = db.rows(c.execute("""SELECT q.id, q.place_id, q.title, q.started_at, q.finished_at FROM quests q
                                     WHERE q.status='done' ORDER BY q.finished_at DESC""").fetchall())
         all_places = {p["id"]: p for p in db.rows(c.execute("SELECT id, name, type, lat, lng FROM places").fetchall())}
-        thumbs = db.rows(c.execute("""SELECT quest_id, photo FROM captures WHERE status IN ('pass','self')
+        thumbs = db.rows(c.execute("""SELECT quest_id, photo FROM captures WHERE status IN ('pass','self','unconfirmed')
                                       AND kind='photo' ORDER BY created_at""").fetchall())
     photos_by_quest: dict[str, list[str]] = {}
     for t in thumbs:
@@ -277,19 +278,27 @@ async def add_capture(qid: str, task_id: str = Form(...), client_id: str = Form(
     raw = await photo.read()
     if len(raw) > 15 * 1024 * 1024:
         raise HTTPException(413, "photo too large")
+    taken = taken_at / 1000 if taken_at > 1e11 else taken_at  # accept ms or s
+    proof = "live"
+    if source == "gallery" and task["kind"] == "photo":
+        # Time and place come from the photo itself, never from where the phone is now.
+        meta = verify.read_exif(raw, context.tzinfo(q["tz"]))
+        if meta["taken_at"] is not None and meta["lat"] is not None:
+            proof, taken, lat, lng, accuracy = "exif", meta["taken_at"], meta["lat"], meta["lng"], meta["accuracy"]
+        else:
+            proof, lat, lng, accuracy = "none", None, None, None
     try:
-        jpeg, img = verify.clean_image(raw)
+        jpeg, img = verify.clean_image(raw)  # EXIF (incl. GPS) is gone from here on
     except Exception:
         raise HTTPException(400, "not an image")
     cid = db.new_id()
     fname = f"{cid}.jpg"
     (config.PHOTO_DIR / fname).write_bytes(jpeg)
-    taken = taken_at / 1000 if taken_at > 1e11 else taken_at  # accept ms or s
     with db.tx() as c:
         c.execute("""INSERT INTO captures (id, client_id, quest_id, task_id, kind, photo, taken_at, lat, lng, accuracy,
-                     source, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     source, status, created_at, proof) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (cid, client_id, qid, task_id, task["kind"], fname, taken, lat, lng, accuracy, source,
-                   "pending", db.now()))
+                   "pending", db.now(), proof))
     extra = {"file_modified": file_modified / 1000 if file_modified and file_modified > 1e11 else file_modified}
     await run_checks(cid, extra)
     return store.public_capture(store.get_capture(cid))
@@ -316,6 +325,22 @@ async def run_checks(cid: str, extra: dict | None = None):
                              verified_at=time.time())
         return
 
+    if c.get("proof") == "none":
+        g = await verify.check_content(jpeg, task)
+        status = verify.decide_content(g)
+        if status == "pass":
+            status = "unconfirmed"
+        note = "This gallery photo has no time or location info, so only what's in it was checked."
+        reason = {
+            "unconfirmed": f"{g.get('what_i_see', '')} {note}".strip(),
+            "fail": f"I see {g.get('what_i_see', 'something else')}. {g.get('reason', '')}".strip(),
+            "unsure": f"Couldn't tell. {g.get('what_i_see', '')}".strip(),
+            "pending": "Saved. Gemma will check it when Base Camp is reachable.",
+        }[status]
+        store.update_capture(cid, status=status, place_ok=None, time_ok=None, quality=qual, gemma=g, reason=reason,
+                             verified_at=None if status == "pending" else time.time())
+        return
+
     if q.get("mode") == "from_here":
         tier_mi = places.TIERS.get(q["distance_tier"], places.TIERS["nearby"])[1]
         place = {"name": "your start point", "lat": q["start_lat"], "lng": q["start_lng"],
@@ -325,7 +350,7 @@ async def run_checks(cid: str, extra: dict | None = None):
     place_ok, dist = verify.check_place(c["lat"], c["lng"], c["accuracy"], place)
     time_ok = verify.check_time(c["taken_at"], q, c["created_at"])
     fm = (extra or {}).get("file_modified")
-    if c["source"] != "camera" and fm and fm < c["taken_at"] - verify.TIME_GRACE_S:
+    if c["source"] == "input" and fm and fm < c["taken_at"] - verify.TIME_GRACE_S:
         time_ok = False
     reason = None
     if not place_ok:
@@ -337,7 +362,8 @@ async def run_checks(cid: str, extra: dict | None = None):
         else:
             reason = f"This was taken {dist} m from {place['name']}. Head a little closer and try again."
     elif not time_ok:
-        reason = "This photo was taken outside the quest time window."
+        reason = ("This gallery photo was taken outside the quest time window." if c.get("proof") == "exif"
+                  else "This photo was taken outside the quest time window.")
     if reason:
         store.update_capture(cid, status="fail", place_ok=int(place_ok), time_ok=int(time_ok), quality=qual,
                              reason=reason, distance_m=dist, verified_at=time.time())
@@ -397,7 +423,7 @@ def points_for(tasks: list[dict]) -> int:
     for t in tasks:
         if t["status"] == "pass":
             pts += 10 + (20 if t.get("rare") else 0)
-        elif t["status"] == "self":
+        elif t["status"] in ("self", "unconfirmed"):
             pts += 5
     return pts
 
@@ -433,7 +459,7 @@ async def share_sky(cid: str, s: Share):
     c = store.get_capture(cid) or _404()
     q = store.get_quest(c["quest_id"])
     task = next((t for t in q["tasks"] if t["id"] == c["task_id"]), {})
-    if task.get("category") != "sky" or c["status"] not in ("pass", "self"):
+    if task.get("category") != "sky" or c["status"] not in ("pass", "self", "unconfirmed"):
         raise HTTPException(400, "Only verified sky photos can be shared.")
     jpeg = (config.PHOTO_DIR / c["photo"]).read_bytes()
     ok, message = await gallery_client.moderate(jpeg)

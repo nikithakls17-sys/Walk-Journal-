@@ -1,7 +1,8 @@
 """Data access helpers shared by the API routes."""
 from . import db
 
-STATUS_RANK = {"pass": 6, "self": 5, "unsure": 4, "pending": 3, "retake": 2, "fail": 1}
+# "unconfirmed": Gemma matched a gallery photo, but it had no EXIF time/GPS to confirm when and where.
+STATUS_RANK = {"pass": 7, "self": 6, "unconfirmed": 5, "unsure": 4, "pending": 3, "retake": 2, "fail": 1}
 
 
 def save_place(p: dict) -> dict:
@@ -75,7 +76,7 @@ def task_states(quest: dict) -> list[dict]:
 
 def public_capture(c: dict) -> dict:
     keep = ("id", "client_id", "task_id", "kind", "taken_at", "status", "place_ok", "time_ok", "quality", "gemma",
-            "reason", "verified_at")
+            "reason", "verified_at", "proof")
     d = {k: c.get(k) for k in keep}
     d["photo_url"] = f"/photos/{c['photo']}" if c.get("photo") else None
     if isinstance(d.get("gemma"), dict):

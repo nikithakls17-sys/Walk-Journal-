@@ -54,6 +54,10 @@
         <button id="walk-here" class="btn big">Walk from here</button>
         <p class="muted hint">No destination: a walk around wherever you are. Photos count anywhere within your distance.</p>
       </div>
+      <div class="card">
+        <label class="toggle"><input type="checkbox" id="auto-read"><span>Read quests aloud as soon as I start</span></label>
+        <p class="muted hint">Off by default. You can always tap “Read it to me” on the quest screen.</p>
+      </div>
       <div id="resume" class="card" hidden>
         <p>You have a quest in progress: <strong id="resume-title"></strong></p>
         <button id="resume-btn" class="btn">Continue</button>
@@ -98,7 +102,8 @@
         <p id="intro-text" class="intro"></p>
         <p class="muted" id="intro-meta"></p>
         <ol id="intro-tasks" class="tasks plain"></ol>
-        <button id="intro-start" class="btn big primary">Start &amp; read it to me</button>
+        <button id="intro-start" class="btn big primary">Start walk</button>
+        <button id="intro-read" class="btn ghost">🔊 Read it to me</button>
       </div>
     </section>
 
@@ -108,7 +113,7 @@
         <p class="away-line">Phone away.<br>Go outside.</p>
         <p class="muted" id="away-timer"></p>
         <p class="muted" id="away-dist"></p>
-        <button id="away-replay" class="btn ghost small">Hear it again</button>
+        <button id="away-replay" class="btn ghost small">🔊 Read it to me</button>
         <details id="away-details">
           <summary>Show tasks</summary>
           <ul id="task-list" class="tasks"></ul>
@@ -162,6 +167,7 @@
   </div>
   <input id="cam-fallback" type="file" accept="image/*" capture="environment" hidden>
   <input id="tracker-input" type="file" accept="image/*" hidden>
+  <input id="gallery-input" type="file" accept="image/*" hidden>
   <audio id="voice" preload="auto"></audio>
 
   <nav class="tabs">

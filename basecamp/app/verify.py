@@ -59,6 +59,53 @@ def clean_image(data: bytes, max_px: int = 1600) -> tuple[bytes, Image.Image]:
     return out.getvalue(), img
 
 
+EXIF_IFD, GPS_IFD = 0x8769, 0x8825
+DATETIME_ORIGINAL, OFFSET_TIME_ORIGINAL, DATETIME = 0x9003, 0x9011, 0x0132
+DEFAULT_EXIF_GPS_ACCURACY_M = 30  # used when the photo doesn't record its own GPS error
+
+
+def read_exif(data: bytes, tz) -> dict:
+    """Capture time and GPS from a gallery photo's EXIF, read BEFORE clean_image() strips it.
+
+    Returns {"taken_at": epoch or None, "lat", "lng", "accuracy"}. Time without a UTC offset in the
+    EXIF is read in the quest's timezone, which is what a phone camera writes.
+    """
+    out = {"taken_at": None, "lat": None, "lng": None, "accuracy": None}
+    try:
+        exif = Image.open(io.BytesIO(data)).getexif()
+    except Exception:
+        return out
+    sub = exif.get_ifd(EXIF_IFD)
+    stamp = sub.get(DATETIME_ORIGINAL) or exif.get(DATETIME)
+    if isinstance(stamp, str):
+        try:
+            when = datetime.strptime(stamp.strip().rstrip("\x00"), "%Y:%m:%d %H:%M:%S")
+            offset = str(sub.get(OFFSET_TIME_ORIGINAL) or "").strip().rstrip("\x00")
+            if offset:
+                when = datetime.strptime(f"{when:%Y-%m-%d %H:%M:%S} {offset}", "%Y-%m-%d %H:%M:%S %z")
+            else:
+                when = when.replace(tzinfo=tz)
+            out["taken_at"] = when.timestamp()
+        except ValueError:
+            pass
+    gps = exif.get_ifd(GPS_IFD)
+
+    def degrees(v, ref):
+        d, m, s = (float(x) for x in v)
+        val = d + m / 60 + s / 3600
+        return -val if str(ref).upper().startswith(("S", "W")) else val
+    try:
+        if gps.get(2) and gps.get(4):
+            lat, lng = degrees(gps[2], gps.get(1, "N")), degrees(gps[4], gps.get(3, "E"))
+            if -90 <= lat <= 90 and -180 <= lng <= 180 and (lat, lng) != (0.0, 0.0):
+                out["lat"], out["lng"] = lat, lng
+                err = gps.get(31)  # GPSHPositioningError
+                out["accuracy"] = float(err) if err else DEFAULT_EXIF_GPS_ACCURACY_M
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return out
+
+
 def quality(img: Image.Image, category: str | None = None) -> dict:
     gray = img.convert("L")
     gray.thumbnail((512, 512))
