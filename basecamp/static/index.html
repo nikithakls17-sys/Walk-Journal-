@@ -11,6 +11,7 @@
   <title>Walk Journal</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="preload" href="/fonts/nunito-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/pixelify-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -79,11 +80,12 @@
 
     <!-- Journal -->
     <section id="v-journal" class="view" hidden>
-      <div class="card">
+      <div class="card diary-cover">
+        <h2>My walk diary</h2>
         <p class="streak" id="j-streak"></p>
         <div id="j-badges" class="shelf"></div>
       </div>
-      <div id="j-entries"></div>
+      <div id="j-entries" class="diary"></div>
     </section>
 
     <!-- Settings -->

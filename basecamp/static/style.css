@@ -280,3 +280,123 @@ body[data-view=away] .grass, body[data-view=loading] .grass, body[data-view=setu
 }
 .share { margin: 16px 0; padding: 14px; border-radius: 14px; background: var(--bg); border: 2px dashed var(--soft); }
 .dot.home { background: var(--wheat); }
+
+/* ===================== Pixel headings + diary pages (static: no animation) ===================== */
+
+@font-face { font-family: "Pixelify Sans"; src: url("/fonts/pixelify-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Pixelify Sans"; src: url("/fonts/pixelify-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Cormorant Garamond"; src: url("/fonts/cormorant-garamond-latin-600-italic.woff2") format("woff2");
+  font-weight: 600; font-style: italic; font-display: swap; }
+
+:root {
+  --pixel: "Pixelify Sans", "Nunito", ui-monospace, monospace;
+  --diary-hand: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --paper: #FDF8EC;
+  --paper-edge: #E9DCC0;
+  --rule: rgba(156, 201, 227, .28);
+  --margin-line: rgba(181, 82, 59, .22);
+  --ink: #4A3B2C;
+  --print: #FFFEFA;
+  --tape-wheat: rgba(232, 200, 114, .72);
+  --tape-sage: rgba(168, 198, 159, .78);
+  --tape-sky: rgba(156, 201, 227, .72);
+  --tape-rose: rgba(222, 160, 140, .62);
+  --seal: #B5523B;
+  --seal-text: #FBF5E6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #2B3630; --paper-edge: #1C2420; --rule: rgba(232, 200, 114, .08); --margin-line: rgba(222, 160, 140, .18);
+    --ink: #F3ECD9; --print: #E9E2CF; --tape-wheat: rgba(201, 169, 86, .55); --tape-sage: rgba(122, 150, 112, .6);
+    --tape-sky: rgba(110, 150, 175, .55); --tape-rose: rgba(170, 110, 95, .55); --seal: #9C4A37; --seal-text: #F3ECD9;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #2B3630; --paper-edge: #1C2420; --rule: rgba(232, 200, 114, .08); --margin-line: rgba(222, 160, 140, .18);
+  --ink: #F3ECD9; --print: #E9E2CF; --tape-wheat: rgba(201, 169, 86, .55); --tape-sage: rgba(122, 150, 112, .6);
+  --tape-sky: rgba(110, 150, 175, .55); --tape-rose: rgba(170, 110, 95, .55); --seal: #9C4A37; --seal-text: #F3ECD9;
+}
+
+/* Pixel font, used lightly: the app title, section headings and small labels. Body text stays Nunito. */
+.top h1, h2, .eyebrow, .stamp, .seal, .page-date, .page-title, .big-stat b, .tabs a { font-family: var(--pixel); }
+.top h1 { font-weight: 600; letter-spacing: .02em; }
+h2 { font-weight: 600; letter-spacing: .01em; }
+.eyebrow { font-weight: 400; letter-spacing: .08em; }
+.tabs a { font-weight: 600; letter-spacing: .03em; }
+
+/* --- diary cover --- */
+.diary-cover h2 { margin-bottom: 4px; }
+
+/* --- a page --- */
+.diary-page {
+  position: relative;
+  margin: 0 0 22px;
+  padding: 20px 18px 16px 50px;
+  color: var(--ink);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(90deg, transparent 36px, var(--margin-line) 36px, var(--margin-line) 37.5px, transparent 37.5px),
+    repeating-linear-gradient(transparent 0 29px, var(--rule) 29px 30px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.05'/%3E%3C/svg%3E");
+  background-position: 0 0, 0 14px, 0 0;
+  border-radius: 6px 14px 10px 6px;
+  border: 1px solid var(--paper-edge);
+  box-shadow: 0 1px 0 var(--paper-edge), 0 10px 24px rgba(74, 59, 44, .12), inset 0 0 40px rgba(232, 200, 114, .08);
+}
+.page-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.page-date { margin: 0; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; opacity: .75; }
+.page-title { margin: 2px 0 2px; font-size: 1.25rem; font-weight: 600; line-height: 1.25; }
+.page-place { margin: 0; font-size: .9rem; opacity: .8; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* mood: a tiny hand-drawn icon */
+.mood { display: inline-flex; align-items: center; gap: 4px; font-size: .8rem; }
+.mood svg { width: 18px; height: 18px; }
+
+/* season seal (a nod to a wax seal) and the gentle partial stamp */
+.stamps { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; }
+.seal {
+  display: grid; place-items: center; width: 62px; height: 62px; padding: 6px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, .18), transparent 55%), var(--seal);
+  color: var(--seal-text); font-size: .62rem; line-height: 1.05; text-align: center; text-transform: uppercase;
+  letter-spacing: .04em; transform: rotate(-8deg); box-shadow: 0 0 0 3px var(--paper), 0 0 0 4px rgba(181, 82, 59, .35);
+}
+.stamp {
+  display: inline-block; padding: 3px 8px; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--meadow); border: 2px solid currentColor; border-radius: 6px; transform: rotate(4deg); opacity: .85;
+}
+:root[data-theme="dark"] .stamp { color: var(--sage); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .stamp { color: var(--sage); } }
+
+/* the note, in a diary hand */
+.diary-note { margin: 14px 0 6px; font-family: var(--diary-hand); font-style: italic; font-weight: 600;
+  font-size: 1.32rem; line-height: 30px; }
+
+/* polaroid prints, slightly tilted, held with washi tape */
+.prints { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 18px 14px; margin: 18px 0 8px; }
+.print {
+  position: relative; margin: 0; padding: 7px 7px 6px; background: var(--print); border-radius: 2px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .16); transform: rotate(var(--tilt, -1.5deg));
+}
+.print img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 1px; }
+.print figcaption { margin-top: 5px; font-size: .72rem; line-height: 1.25; color: #5a4a3a; }
+.print figcaption small { display: block; opacity: .75; font-style: italic; }
+.tape { position: absolute; top: -9px; left: 50%; width: 56px; height: 18px; transform: translateX(-50%) rotate(-3deg);
+  border-radius: 2px; opacity: .95; box-shadow: 0 1px 1px rgba(0, 0, 0, .06); }
+.tape-wheat { background: var(--tape-wheat); }
+.tape-sage { background: var(--tape-sage); }
+.tape-sky { background: var(--tape-sky); }
+.tape-rose { background: var(--tape-rose); }
+
+.page-badges { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 0; font-size: .8rem; }
+.page-badges span { background: var(--tape-wheat); color: var(--ink); border-radius: 10px; padding: 2px 8px; }
+.page-foot { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--paper-edge); font-size: .8rem; opacity: .75; }
+
+/* one tiny critter per page at most, tucked in a corner */
+.critter { position: absolute; right: 12px; bottom: 30px; width: 30px; height: 30px; opacity: .45; color: var(--ink); }
+
+@media (max-width: 380px) {
+  .diary-page { padding-left: 42px; background-image:
+    linear-gradient(90deg, transparent 30px, var(--margin-line) 30px, var(--margin-line) 31.5px, transparent 31.5px),
+    repeating-linear-gradient(transparent 0 29px, var(--rule) 29px 30px); }
+  .prints { grid-template-columns: repeat(2, 1fr); }
+}

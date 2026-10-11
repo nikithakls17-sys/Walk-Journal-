@@ -844,21 +844,75 @@ views.journal = async () => {
   $("#j-badges").innerHTML = badges.badges.map((b) => `<div class="badge ${b.earned_at ? "" : "locked"}" title="${esc(b.how)}">
     <span>${b.icon}</span>${esc(b.name)}</div>`).join("");
   if (!data.entries.length) return ($("#j-entries").innerHTML = `<p class="muted center">No walks yet. Your first page is waiting outside.</p>`);
-  $("#j-entries").innerHTML = data.entries.map((q) => {
-    const verified = q.tasks.filter((t) => t.status === "pass").length;
-    const photos = q.tasks.filter((t) => t.capture?.photo_url && t.kind === "photo");
-    return `<article class="card note entry">
-      <p class="eyebrow">${new Date(q.finished_at * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${esc(q.place?.name || "")}</p>
-      <h3>${esc(q.title)}${q.partial ? ' <span class="tag soft">partial walk</span>' : ""}</h3>
-      <p class="muted">${verified}/${q.tasks.length} verified · ${fmtDuration(q.outside_seconds)} outside · ${Math.round(q.screen_seconds || 0)} s on screen${q.mood ? ` · ${esc(q.mood)}` : ""}</p>
-
-      ${q.note ? `<blockquote>${esc(q.note)}</blockquote>` : ""}
-      <div class="thumbs big">${photos.map((t) => `<figure><img src="${t.capture.photo_url}" alt="${esc(t.prompt)}" loading="lazy">
-        <figcaption>${STATUS_ICON[t.status]} ${esc(t.prompt)}${t.capture?.label && t.status !== "pass" ? ` (${esc(t.capture.label)})` : ""}</figcaption></figure>`).join("")}</div>
-      ${q.badges.length ? `<div class="badges">${q.badges.map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("")}</div>` : ""}
-    </article>`;
-  }).join("");
+  $("#j-entries").innerHTML = data.entries.map(diaryPage).join("");
 };
+
+// ---------- diary pages ----------
+// One walk = one page: cream paper, a season seal, polaroid prints held by washi tape, the note in a
+// diary hand, and at most one tiny critter in a corner. Static: no animation anywhere.
+
+const svg = (body, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+  stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const MOOD_ICONS = {
+  calm: svg('<circle cx="12" cy="12" r="9"/><path d="M8.5 10.5q1.5 1 3 0M12.5 10.5q1.5 1 3 0M9 15q3 2 6 0"/>'),
+  happy: svg('<circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r=".6" fill="currentColor"/><circle cx="15" cy="10" r=".6" fill="currentColor"/><path d="M8.5 14q3.5 3.5 7 0"/>'),
+  energized: svg('<path d="M13 3 6 13h5l-1 8 7-10h-5z"/>'),
+  tired: svg('<circle cx="11" cy="13" r="8"/><path d="M7.5 12h2.5M12.5 12h2.5M9.5 16q1.5-1 3 0M17 3h3l-3 3h3"/>'),
+};
+const CRITTERS = [
+  // a sleepy little sun
+  svg('<circle cx="12" cy="13" r="5"/><path d="M12 4v2M12 20v2M3 13h2M19 13h2M5.6 6.6l1.4 1.4M17 18l1.4 1.4M5.6 19.4 7 18M17 8l1.4-1.4"/><path d="M9.6 12.6q1 .8 2 0M12.4 12.6q1 .8 2 0M11 15.2h2"/>', "critter"),
+  // a small snail with a face
+  svg('<path d="M3 18h14q3 0 3-3v-1"/><path d="M20 14v-4M18 14v-3"/><circle cx="20" cy="9.5" r=".5" fill="currentColor"/><circle cx="18" cy="10.5" r=".5" fill="currentColor"/><circle cx="10" cy="13" r="5"/><path d="M10 13a2 2 0 1 0 2-2"/>', "critter"),
+  // a sprout saying hi
+  svg('<path d="M12 21v-8"/><path d="M12 13q-6 0-6-6 6 0 6 6zM12 11q0-5 5-5 0 5-5 5z"/><circle cx="10" cy="17" r=".5" fill="currentColor"/><circle cx="14" cy="17" r=".5" fill="currentColor"/>', "critter"),
+];
+const TAPES = ["wheat", "sage", "sky", "rose"];
+
+function hashOf(s) {
+  let h = 0;
+  for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+function diaryPage(q) {
+  const h = hashOf(q.id);
+  const when = new Date(q.finished_at * 1000);
+  const date = when.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const photos = q.tasks.filter((t) => t.capture?.photo_url && t.kind === "photo");
+  const mood = q.mood && MOOD_ICONS[q.mood] ? `<span class="mood" title="${esc(q.mood)}">${MOOD_ICONS[q.mood]}<span>${esc(q.mood)}</span></span>` : "";
+  const prints = photos.map((t, i) => {
+    const tilt = ((h >>> i) & 1 ? 1 : -1) * (1.2 + ((h >>> (i + 3)) % 3) * 0.6);
+    const label = t.capture?.label && t.status !== "pass" ? t.capture.label : "";
+    return `<figure class="print" style="--tilt:${tilt.toFixed(1)}deg">
+      <span class="tape tape-${TAPES[(h + i) % TAPES.length]}"></span>
+      <img src="${t.capture.photo_url}" alt="${esc(t.prompt)}" loading="lazy">
+      <figcaption>${esc(t.prompt)}${label ? `<small>${esc(label)}</small>` : ""}</figcaption></figure>`;
+  }).join("");
+  const foot = [q.partial ? "" : `${q.points || 0} points`, `${fmtDuration(q.outside_seconds)} outside`,
+    `${Math.round(q.screen_seconds || 0)} s on screen`].filter(Boolean).join(" · ");
+  // About one page in three gets a critter, never more than one. ">>>" keeps the hash unsigned (">>" went
+  // negative on big hashes and picked a critter that didn't exist, printing "undefined").
+  const critter = h % 3 === 0 ? CRITTERS[(h >>> 4) % CRITTERS.length] || "" : "";
+  return `<article class="diary-page${q.partial ? " is-partial" : ""}">
+    <header class="page-head">
+      <div>
+        <p class="page-date">${esc(date)}</p>
+        <h3 class="page-title">${esc(q.title)}</h3>
+        <p class="page-place">${esc(q.place?.name || "")}${mood}</p>
+      </div>
+      <div class="stamps">
+        ${q.season ? `<span class="seal">${esc(q.season)}</span>` : ""}
+        ${q.partial ? `<span class="stamp">partial walk</span>` : ""}
+      </div>
+    </header>
+    ${q.note ? `<p class="diary-note">${esc(q.note)}</p>` : ""}
+    ${prints ? `<div class="prints">${prints}</div>` : ""}
+    ${q.badges.length ? `<p class="page-badges">${q.badges.map((b) => `<span>${b.icon} ${esc(b.name)}</span>`).join("")}</p>` : ""}
+    <footer class="page-foot">${foot}</footer>
+    ${critter}
+  </article>`;
+}
 
 // ---------- settings + notifications ----------
 // Web Push from Base Camp for reminders; the live quest notification is shown by the phone itself and
