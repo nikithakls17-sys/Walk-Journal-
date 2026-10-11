@@ -11,3 +11,4 @@ One line per thing that broke or surprised us: what happened → why → fix.
 | Oct 11 | Camera overlay covered every screen | `.camera { display: flex }` beats the `hidden` attribute's UA style | Global `[hidden] { display: none !important; }`; caught by a headless screenshot |
 | Oct 11 | Tracing outcomes (photo match / no match) never reached Sentry | Callers set the outcome after `gemma.chat` returned, when the span had already closed | `gemma.chat(..., outcome=fn)` labels the result inside the span |
 | Oct 11 | Tracing test found no `gen_ai.chat` span in the transaction | sentry-sdk 2.71 streams gen_ai spans as standalone v2 `span` envelope items | Test reads both transaction spans and standalone span items |
+| Oct 11 | A blank `ELEVENLABS_VOICE_ID=` in .env would have sent an empty voice ID to ElevenLabs | `os.getenv(key, default)` returns "" when the key exists but is empty | Use `os.getenv(key) or default` |
