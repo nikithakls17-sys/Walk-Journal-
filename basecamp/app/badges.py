@@ -19,7 +19,9 @@ BADGES = {
 
 def _done_quests() -> list[dict]:
     with db.tx() as c:
-        return db.rows(c.execute("SELECT * FROM quests WHERE status='done' ORDER BY finished_at").fetchall())
+        # A walk from here that never got far enough from the start doesn't count toward badges or streaks.
+        return db.rows(c.execute("""SELECT * FROM quests WHERE status='done' AND COALESCE(requirement_met, 1) = 1
+                                    ORDER BY finished_at""").fetchall())
 
 
 def _verified() -> list[tuple[dict, dict, dict]]:

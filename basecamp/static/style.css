@@ -203,7 +203,9 @@ body[data-view=away] { background: linear-gradient(var(--sky-top), var(--sky-bot
 .pin.faded span { background: var(--sage); opacity: .55; }
 .pin.solid span { background: var(--meadow); width: 30px; height: 30px; color: #fff; font-weight: 800; font-size: .8rem;
   display: flex; align-items: center; justify-content: center; line-height: 1; }
+.pin.solid.home span { background: var(--wheat); color: var(--bark); }
 .legend { text-align: center; font-size: .85rem; }
+.hint { font-size: .85rem; margin: -2px 4px 4px; }
 .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: middle; }
 .dot.solid { background: var(--meadow); } .dot.faded { background: var(--sage); opacity: .55; }
 .visit { margin-top: 8px; font-size: .85rem; }
@@ -258,3 +260,4 @@ body[data-view=away] .grass, body[data-view=loading] .grass, body[data-view=setu
   .clouds span:nth-child(3) { left: 82%; }
 }
 .share { margin: 16px 0; padding: 14px; border-radius: 14px; background: var(--bg); border: 2px dashed var(--soft); }
+.dot.home { background: var(--wheat); }

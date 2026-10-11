@@ -105,9 +105,22 @@ def tx():
         conn.close()
 
 
+# Columns added after the first release; init() adds any that an older database is missing.
+MIGRATIONS = {
+    "quests": [("mode", "TEXT DEFAULT 'place'"), ("start_lat", "REAL"), ("start_lng", "REAL"),
+               ("away_goal_m", "REAL DEFAULT 0"), ("requirement_met", "INTEGER")],
+    "captures": [("distance_m", "REAL")],
+}
+
+
 def init():
     with tx() as c:
         c.executescript(SCHEMA)
+        for table, cols in MIGRATIONS.items():
+            have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+            for name, decl in cols:
+                if name not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 JSON_COLS = {"features", "raw", "tasks", "context", "quality", "gemma", "results"}

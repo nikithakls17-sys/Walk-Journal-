@@ -100,6 +100,8 @@ UNSAFE = re.compile(
     r"(enter|into|in) the (water|lake|pond|river|creek|stream)|cross the (road|street|river|creek|stream)|"
     r"(touch|pet|feed|chase|catch|hold|pick up) (a |the |an )?(squirrel|bird|duck|goose|geese|deer|snake|animal|"
     r"wildlife|frog|turtle|rabbit|insect|bee|ladybug|caterpillar)\w*|pick (a |the )?flower\w*|on the ice)\b", re.I)
+# Walk from here has no destination, so tasks may not send people to a park, trail or landmark.
+NO_DESTINATION = re.compile(r"\b(parks?|trails?|trailheads?|landmarks?|downtown|campus|visitor center)\b", re.I)
 NIGHT_SKY = re.compile(r"\b(moon|stars?|night|constellation|planet)\b", re.I)
 
 QUEST_SCHEMA = {
@@ -194,6 +196,12 @@ def _place_task(place: dict, n: int) -> dict:
     return _task(options[n % len(options)], place_specific=True)
 
 
+def home_place(lat: float, lng: float) -> dict:
+    """The "place" for a Walk from here quest: no destination, so no features Gemma could mention."""
+    return {"name": "your neighborhood", "type": "walk from home", "description": "", "features": [],
+            "lat": lat, "lng": lng}
+
+
 def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
     """Validate and repair a Gemma quest. Returns the quest and the repairs made."""
     difficulty, season = ctx["difficulty"], ctx["season"]
@@ -202,6 +210,7 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
     recent = {r.lower() for r in ctx.get("recent_task_types", [])}
     used: set[str] = set()
     night = ctx.get("night_quest")
+    from_here = ctx.get("mode") == "from_here"
 
     tasks = []
     for t in raw.get("tasks", []):
@@ -211,6 +220,9 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
         label = (t.get("type_label") or "").lower().strip()
         if is_unsafe(text):
             notes.append(f"dropped unsafe task: {t['prompt']}")
+            continue
+        if from_here and NO_DESTINATION.search(text):
+            notes.append(f"dropped destination task on a walk from here: {t['prompt']}")
             continue
         bad = unsupported_features(text, place)
         if bad:
@@ -222,7 +234,7 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
         if label and (label in recent or label in used):
             notes.append(f"dropped repeated task type '{label}'")
             continue
-        specific = bool(t.get("place_specific"))
+        specific = bool(t.get("place_specific")) and not from_here
         if specific and not place_features(place) and place["name"].lower() not in text.lower():
             specific = False
         used.add(label)
@@ -231,7 +243,7 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
                       "type_label": label or "photo", "place_specific": specific,
                       "rare": bool(t.get("rare")) and difficulty == "hard"})
 
-    want_place = {"easy": 0, "medium": 1, "hard": 2}[difficulty]
+    want_place = 0 if from_here else {"easy": 0, "medium": 1, "hard": 2}[difficulty]
     want_rare = 1 if difficulty == "hard" else 0
     photo_slots = n - (1 if difficulty == "hard" else 0)
 
@@ -257,7 +269,15 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
     bank = [b for b in _bank(season, used | recent) if not (night and b["category"] == "sky")]
     while len(tasks) < photo_slots and bank:
         tasks.append(bank.pop(0))
+        used.add(tasks[-1]["type_label"])
         notes.append("padded with seasonal task")
+    # After several quests the "no repeats from the last 3 quests" rule can empty the bank.
+    # A full quest matters more, so allow recent types again (still never twice in one quest).
+    bank = [b for b in _bank(season, used) if not (night and b["category"] == "sky")]
+    while len(tasks) < photo_slots and bank:
+        tasks.append(bank.pop(0))
+        used.add(tasks[-1]["type_label"])
+        notes.append("padded with a recently used task type")
     if difficulty == "hard":
         goal = TRACKER_GOAL_MI.get(ctx["distance_tier"], 1.5)
         tasks.append({"kind": "tracker", "prompt": f"Walk at least {goal:g} miles and add your tracker screenshot",
@@ -292,6 +312,9 @@ def clamp_deadline(value, ctx: dict) -> int:
 
 def default_intro(place: dict, quest: dict) -> str:
     n = len(quest["tasks"])
+    if place.get("type") == "walk from home":
+        return (f"Welcome to {quest['title']}, a walk from right where you are. You have {n} things to find in about "
+                f"{quest['deadline_minutes']} minutes. Wander wherever feels good, and put your phone away.")
     return (f"Welcome to {quest['title']} at {place['name']}. You have {n} things to find in about "
             f"{quest['deadline_minutes']} minutes. Take your time, look around, and put your phone away.")
 
@@ -330,6 +353,15 @@ async def generate(ctx: dict, place: dict, attempts: int = 2) -> tuple[dict, str
         "hard": f"Write {n - 1} photo tasks: seasonal finds, 2 place-specific tasks, and 1 rare find (rare=true) "
                 "that might not be possible this time of year.",
     }[ctx["difficulty"]]
+    if ctx.get("mode") == "from_here":
+        rules = {
+            "easy": f"Write {n} photo tasks",
+            "medium": f"Write {n} photo tasks",
+            "hard": f"Write {n - 1} photo tasks, including 1 rare find (rare=true) that might not be possible this time of year",
+        }[ctx["difficulty"]] + (" for a walk from home with NO destination. Only seasonal and time-of-day finds anyone "
+                                "could spot on a neighborhood walk (sky, trees, leaves, plants, stones, birds). "
+                                "No place-specific tasks: place_specific must be false, and never mention parks, lakes, "
+                                "trails or any landmark.")
     facts = {k: v for k, v in ctx.items() if k != "sunset_ts"} | {"place": {k: v for k, v in ctx["place"].items() if k not in ("lat", "lng")}}
     prompt = (f"FACTS:\n{json.dumps(facts, indent=1)}\n\n{rules}\n"
               f"Suggest deadline_minutes around {DEFAULT_DEADLINE[ctx['difficulty']]}.")

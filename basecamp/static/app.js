@@ -144,20 +144,18 @@ views.home = () => {
 $("#resume-btn").onclick = () => resumeQuest();
 const choice = (name) => document.querySelector(`input[name=${name}]:checked`).value;
 
-$("#quest-here").onclick = async () => {
-  show("loading", "Finding you…");
-  const fix = await getFix();
-  if (!fix) { toast("Need your location for that."); return show("home"); }
-  try {
-    const place = await api("/api/places/here", { json: { lat: fix.lat, lng: fix.lng } });
-    await makeQuest(place.id);
-  } catch (e) { toast(e.message); show("home"); }
+$("#walk-here").onclick = async () => {
+  show("loading", "Finding where you're starting…");
+  const fix = await getFix(10000);
+  if (!fix) { toast("Walk from here needs your location."); return show("home"); }
+  await makeQuest({ mode: "from_here", lat: fix.lat, lng: fix.lng });
 };
 
-async function makeQuest(placeId) {
+async function makeQuest(target) {
   show("loading", "Gemma is writing your quest…");
+  const where = typeof target === "string" ? { mode: "place", place_id: target } : target;
   try {
-    const q = await api("/api/quests", { json: { place_id: placeId, distance_tier: choice("tier"), difficulty: choice("diff"), tz: TZ } });
+    const q = await api("/api/quests", { json: { ...where, distance_tier: choice("tier"), difficulty: choice("diff"), tz: TZ } });
     saveQuest(q);
     await prefetchAudio(q);
     show("intro");
@@ -178,7 +176,7 @@ $("#find-walk").onclick = async () => {
   try {
     suggestions = { ...(await api(`/api/places/suggest?${qs}`)), from: fix };
     if (!suggestions.picks.length) {
-      toast("No walks found in that range. Try a longer distance, or quest right where you are.");
+      toast("No walks found in that range. Try a longer distance, or Walk from here.");
       return show("home");
     }
     show("suggest");
@@ -245,7 +243,7 @@ views.map = async () => {
     });
     data.visited.forEach((p) => {
       pts.push([p.lat, p.lng]);
-      const icon = L.divIcon({ className: "pin solid", html: `<span>${p.visits.length}</span>`, iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] });
+      const icon = L.divIcon({ className: `pin solid${p.id === "home-walks" ? " home" : ""}`, html: `<span>${p.visits.length}</span>`, iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] });
       const visits = p.visits.map((v) => `<div class="visit"><b>${new Date(v.date * 1000).toLocaleDateString()}</b> ${esc(v.title)}
         <div class="thumbs">${v.photos.map((u) => `<img src="${u}" alt="">`).join("")}</div></div>`).join("");
       L.marker([p.lat, p.lng], { icon }).addTo(m._layer).bindPopup(`<b>${esc(p.name)}</b> · ${p.visits.length} visit${p.visits.length > 1 ? "s" : ""}${visits}`, { maxWidth: 260 });
@@ -274,7 +272,8 @@ function resumeQuest() {
 }
 
 views.intro = () => {
-  $("#intro-place").textContent = quest.place?.name || "";
+  $("#intro-place").textContent = quest.mode === "from_here"
+    ? `Walk from here · within ${fmtDistance(quest.radius_m)}` : quest.place?.name || "";
   $("#intro-title").textContent = quest.title;
   $("#intro-text").textContent = quest.spoken_intro;
   const mins = quest.deadline_minutes;
@@ -383,13 +382,41 @@ function tickTimer() {
     if (!quest?.deadline_at) return;
     const left = Math.round((quest.deadline_at * 1000 - Date.now()) / 60000);
     $("#away-timer").textContent = left > 0 ? `${left} min left` : "Time's up. Finish when you're ready.";
+    $("#away-dist").textContent = awayLine();
   };
   upd();
-  tickTimer._i = setInterval(upd, 30000);
+  tickTimer._i = setInterval(upd, 15000);
+}
+
+function metersBetween(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function fmtDistance(m) {
+  return m >= 1609 ? `${+(m / 1609.344).toFixed(1)} mi` : `${Math.round(m)} m`;
+}
+
+function awayLine() {
+  if (quest?.mode !== "from_here" || !quest.start || !lastFix) return "";
+  const d = metersBetween(quest.start, lastFix);
+  const goal = quest.away_goal_m;
+  const nudge = goal && !quest.away_met ? (d >= goal ? " · far enough, snap one here!" : ` · get ${goal} m away for one photo`) : "";
+  return `You're ${fmtDistance(d)} from your start${nudge}`;
+}
+
+function awayRequirement() {
+  if (quest.mode !== "from_here" || !quest.away_goal_m) return "";
+  const met = quest.away_met;
+  return `<li class="task s-${met ? "pass" : "todo"}"><span class="ico">${met ? "✓" : "🚶"}</span>
+    <div class="body"><span>Take one photo at least ${quest.away_goal_m} m from where you started</span>
+    <em>${met ? "done" : `farthest verified photo so far: ${quest.farthest_m || 0} m`}</em></div></li>`;
 }
 
 function renderTasks() {
-  $("#task-list").innerHTML = quest.tasks.map((t) => {
+  $("#task-list").innerHTML = awayRequirement() + quest.tasks.map((t) => {
     const st = t.local_status || t.status;
     const reason = t.capture?.reason && st !== "pass" ? `<small>${esc(t.capture.reason)}</small>` : "";
     const done = ["pass", "self", "skipped"].includes(st);
@@ -603,6 +630,8 @@ views.summary = () => {
   $("#sum-screen").innerHTML = `<b>${Math.round(q.screen_seconds || 0)} seconds</b> on screen.<br><b>${fmtDuration(outside)}</b> outside.`;
   $("#sum-points").textContent = q.points == null ? "Saved on your phone. Points and badges appear when it syncs."
     : `${q.points} points${q.streak ? ` · 🔥 ${q.streak}-day streak` : ""}`;
+  if (q.mode === "from_here" && q.requirement_met === 0)
+    $("#sum-points").textContent = `You didn't get ${q.away_goal_m} m from your start (farthest photo: ${q.farthest_m} m), so this walk is in your journal but doesn't earn points, badges or a streak day.`;
   $("#sum-badges").innerHTML = (q.new_badges || []).map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("");
   const skies = q.tasks.filter((t) => t.category === "sky" && ["pass", "self"].includes(t.status) && t.capture);
   $("#sum-share").innerHTML = skies.length && online ? `<div class="share">
@@ -651,6 +680,7 @@ views.journal = async () => {
       <p class="eyebrow">${new Date(q.finished_at * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${esc(q.place?.name || "")}</p>
       <h3>${esc(q.title)}</h3>
       <p class="muted">${verified}/${q.tasks.length} verified · ${fmtDuration(q.outside_seconds)} outside · ${Math.round(q.screen_seconds || 0)} s on screen${q.mood ? ` · ${esc(q.mood)}` : ""}</p>
+      ${q.mode === "from_here" && q.requirement_met === 0 ? `<p class="muted"><small>Didn't reach ${q.away_goal_m} m from the start, so no points or badges.</small></p>` : ""}
       ${q.note ? `<blockquote>${esc(q.note)}</blockquote>` : ""}
       <div class="thumbs big">${photos.map((t) => `<figure><img src="${t.capture.photo_url}" alt="${esc(t.prompt)}" loading="lazy">
         <figcaption>${STATUS_ICON[t.status]} ${esc(t.prompt)}</figcaption></figure>`).join("")}</div>

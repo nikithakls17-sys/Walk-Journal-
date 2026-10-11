@@ -12,6 +12,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from . import badges, config, context, db, gallery_client, gemma, places, quests, store, tracing, tts, verify
+from .geo import M_PER_MI
 
 tracing.init()
 db.init()
@@ -105,37 +106,86 @@ def map_data():
                             "photos": photos_by_quest.get(q["id"], [])[:4]})
         if q["started_at"] and q["finished_at"]:
             outside += max(0, q["finished_at"] - q["started_at"])
-    suggested = [p for pid, p in all_places.items() if pid not in visited and not pid.startswith("here-")]
+    suggested = [p for pid, p in all_places.items()
+                 if pid not in visited and not pid.startswith("here-") and pid != HOME_WALKS_ID]
     return {"visited": list(visited.values()), "suggested": suggested,
             "stats": {"walks": len(done), "places": len(visited), "outside_seconds": round(outside)}}
 
 
 # ---------- quests ----------
 
+HOME_WALKS_ID = "home-walks"
+AWAY_GOAL_M = {"easy": 0, "medium": 300, "hard": 300}  # Walk from here: one photo this far from the start
+
+
+def from_here_radius_m(tier: str) -> float:
+    """Walk from here: every photo must be within the chosen distance of the start (Nearby = 1 mile)."""
+    return places.TIERS.get(tier, places.TIERS["nearby"])[1] * M_PER_MI
+
+
 class NewQuest(BaseModel):
-    place_id: str
+    mode: str = "place"  # "place" (go to a destination) or "from_here" (a walk around home)
+    place_id: str | None = None
+    lat: float | None = None  # start point, for mode=from_here
+    lng: float | None = None
     distance_tier: str = "nearby"
     difficulty: str = "easy"
     tz: str | None = None
+
+
+def home_walks_place(lat: float, lng: float) -> dict:
+    """All Walk from here quests share one map pin, at home if it's set, otherwise at the first start."""
+    existing = store.get_place(HOME_WALKS_ID)
+    s = db.get_setting("settings", {}) or {}
+    if s.get("home_lat") is not None:
+        lat, lng = s["home_lat"], s["home_lng"]
+    elif existing:
+        lat, lng = existing["lat"], existing["lng"]
+    return store.save_place({"id": HOME_WALKS_ID, "name": "Home walks", "type": "walk from home",
+                             "description": "", "features": [], "lat": lat, "lng": lng})
 
 
 @app.post("/api/quests")
 async def create_quest(req: NewQuest):
     if req.difficulty not in quests.TASK_COUNTS:
         raise HTTPException(400, "difficulty must be easy, medium or hard")
-    place = store.get_place(req.place_id)
-    if not place:
-        raise HTTPException(404, "unknown place")
-    ctx = context.build(place, req.distance_tier, req.difficulty, req.tz, store.recent_task_types())
-    quest, source, notes = await quests.generate(ctx, place)
+    if req.distance_tier not in places.TIERS:
+        raise HTTPException(400, "distance_tier must be nearby, walk_run or adventure")
+    if req.mode == "from_here":
+        if req.lat is None or req.lng is None:
+            raise HTTPException(400, "Walk from here needs your current location")
+        place = home_walks_place(req.lat, req.lng)
+        gen_place = quests.home_place(req.lat, req.lng)  # what Gemma sees: no destination, no features
+        start, away_goal = (req.lat, req.lng), AWAY_GOAL_M[req.difficulty]
+    elif req.mode == "place":
+        place = store.get_place(req.place_id or "")
+        if not place:
+            raise HTTPException(404, "unknown place")
+        gen_place, start, away_goal = place, (None, None), 0
+    else:
+        raise HTTPException(400, "mode must be place or from_here")
+    ctx = context.build(gen_place, req.distance_tier, req.difficulty, req.tz, store.recent_task_types())
+    ctx["mode"] = req.mode
+    quest, source, notes = await quests.generate(ctx, gen_place)
     qid = db.new_id()
     with db.tx() as c:
         c.execute("""INSERT INTO quests (id, place_id, created_at, tz, distance_tier, difficulty, title, spoken_intro,
-                     deadline_minutes, tasks, context, source, skips_left) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     deadline_minutes, tasks, context, source, skips_left, mode, start_lat, start_lng, away_goal_m)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (qid, place["id"], db.now(), req.tz, req.distance_tier, req.difficulty, quest["title"],
                    quest["spoken_intro"], quest["deadline_minutes"], db.dumps(quest["tasks"]),
-                   db.dumps(ctx | {"repairs": notes}), source, 1 if req.difficulty == "hard" else 0))
+                   db.dumps(ctx | {"repairs": notes}), source, 1 if req.difficulty == "hard" else 0,
+                   req.mode, start[0], start[1], away_goal))
     return quest_view(qid)
+
+
+def away_progress(q: dict) -> tuple[float, bool]:
+    """(farthest verified photo from the start in meters, whether the away goal is met)."""
+    caps = [c for c in store.captures_for(q["id"])
+            if c["kind"] == "photo" and c["status"] in ("pass", "self") and c.get("distance_m") is not None]
+    farthest = max((c["distance_m"] for c in caps), default=0.0)
+    goal = q.get("away_goal_m") or 0
+    return farthest, farthest >= goal
 
 
 def quest_view(qid: str) -> dict:
@@ -145,6 +195,7 @@ def quest_view(qid: str) -> dict:
     place = store.get_place(q["place_id"])
     tasks = store.task_states(q)
     ctx = q["context"] or {}
+    farthest, away_met = away_progress(q)
     return {
         "id": q["id"], "title": q["title"], "spoken_intro": q["spoken_intro"], "status": q["status"],
         "difficulty": q["difficulty"], "distance_tier": q["distance_tier"], "source": q["source"],
@@ -155,6 +206,10 @@ def quest_view(qid: str) -> dict:
         "place": {k: place[k] for k in ("id", "name", "type", "lat", "lng", "radius_m", "address")} if place else None,
         "tasks": tasks, "screen_seconds": q["screen_seconds"], "note": q["note"], "mood": q["mood"],
         "points": q["points"],
+        "mode": q.get("mode") or "place", "start": {"lat": q["start_lat"], "lng": q["start_lng"]} if q.get("start_lat") is not None else None,
+        "radius_m": from_here_radius_m(q["distance_tier"]) if q.get("mode") == "from_here" else None,
+        "away_goal_m": q.get("away_goal_m") or 0, "farthest_m": round(farthest), "away_met": away_met,
+        "requirement_met": q.get("requirement_met"),
     }
 
 
@@ -261,7 +316,12 @@ async def run_checks(cid: str, extra: dict | None = None):
                              verified_at=time.time())
         return
 
-    place = store.get_place(q["place_id"])
+    if q.get("mode") == "from_here":
+        tier_mi = places.TIERS.get(q["distance_tier"], places.TIERS["nearby"])[1]
+        place = {"name": "your start point", "lat": q["start_lat"], "lng": q["start_lng"],
+                 "radius_m": from_here_radius_m(q["distance_tier"])}
+    else:
+        place = store.get_place(q["place_id"])
     place_ok, dist = verify.check_place(c["lat"], c["lng"], c["accuracy"], place)
     time_ok = verify.check_time(c["taken_at"], q, c["created_at"])
     fm = (extra or {}).get("file_modified")
@@ -269,13 +329,18 @@ async def run_checks(cid: str, extra: dict | None = None):
         time_ok = False
     reason = None
     if not place_ok:
-        reason = ("No GPS fix with this photo, so I can't confirm the place." if dist is None
-                  else f"This was taken {dist} m from {place['name']}. Head a little closer and try again.")
+        if dist is None:
+            reason = "No GPS fix with this photo, so I can't confirm the place."
+        elif q.get("mode") == "from_here":
+            reason = (f"This was taken {dist / M_PER_MI:.1f} mi from where you started. "
+                      f"This walk stays within {tier_mi:g} mi, so head back a little and try again.")
+        else:
+            reason = f"This was taken {dist} m from {place['name']}. Head a little closer and try again."
     elif not time_ok:
         reason = "This photo was taken outside the quest time window."
     if reason:
         store.update_capture(cid, status="fail", place_ok=int(place_ok), time_ok=int(time_ok), quality=qual,
-                             reason=reason, verified_at=time.time())
+                             reason=reason, distance_m=dist, verified_at=time.time())
         return
 
     g = await verify.check_content(jpeg, task)
@@ -287,7 +352,7 @@ async def run_checks(cid: str, extra: dict | None = None):
         "pending": "Saved. Gemma will check it when Base Camp is reachable.",
     }[status]
     store.update_capture(cid, status=status, place_ok=1, time_ok=1, quality=qual, gemma=g, reason=reason,
-                         verified_at=None if status == "pending" else time.time())
+                         distance_m=dist, verified_at=None if status == "pending" else time.time())
 
 
 @app.post("/api/captures/{cid}/retry")
@@ -346,12 +411,13 @@ def finish_quest(qid: str, f: Finish):
         store.update_quest(qid, started_at=q["created_at"], deadline_at=q["created_at"] + q["deadline_minutes"] * 60)
         q = store.get_quest(qid)
     tasks = store.task_states(q)
+    _, met = away_progress(q)  # Medium/Hard walks from here only count if you actually walked away from the start
     store.update_quest(qid, finished_at=q["finished_at"] or finished, status="done", note=f.note, mood=f.mood,
                        screen_seconds=f.screen_seconds if f.screen_seconds is not None else q["screen_seconds"],
-                       points=points_for(tasks))
+                       points=points_for(tasks) if met else 0, requirement_met=int(met))
     view = quest_view(qid)
     view["outside_seconds"] = (view["finished_at"] or now) - view["started_at"]
-    view["new_badges"] = badges.evaluate(qid) if not q["finished_at"] else []
+    view["new_badges"] = badges.evaluate(qid) if not q["finished_at"] and met else []
     view["streak"] = badges.current_streak()
     return view
 
