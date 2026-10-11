@@ -31,9 +31,13 @@ No destination needed. **Walk from here** turns a normal walk around your home i
 - **Medium and Hard need one verified photo at least 300 m from the start**, so you actually walk. The phone shows how far you are from the start. A walk that never gets that far is saved as a partial walk: in your journal and on your map, without points or badges.
 - Every walk from here adds to one **Home walks** pin on your map, with a visit count.
 
+### A guide inside the app
+
+The **Guide** tab explains how to use Walk Journal and every rule in plain words: when a walk is complete, how photos are checked, what each mark means, gallery photos, swaps and skips, points, the weekly goal, walking kindly, and what data stays on the laptop.
+
 ### The journal
 
-Each walk is a page in a diary: soft cream paper with faint ruled lines, the date and walk title in a small pixel font, the season as a little wax seal, your mood as a tiny hand-drawn icon, and your note in a diary hand. Photos sit on the page as polaroid prints held with washi tape. Partial walks get a gentle "partial walk" stamp. Now and then a sleepy sun, a snail or a sprout hides in a corner. It's all CSS and inline SVG: no image files, no animation, and it works in dusk mode.
+Each walk is a page in a diary: soft cream paper with faint ruled lines, the walk title in a whimsical italic serif, the date in small classic-serif capitals, the season as a little wax seal, your mood as a tiny hand-drawn icon, and your note in a diary italic with a red drop cap. Photos sit on the page as polaroid prints held with washi tape. Partial walks get a gentle "partial walk" stamp. Now and then a sleepy sun, a snail or a sprout hides in a corner. It's all CSS and inline SVG: no image files, no animation, and it works in dusk mode.
 
 ### Gentle by design
 
@@ -210,4 +214,4 @@ None so far. Any commit made after Oct 11, 11:59 PM PDT will be listed here.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The Nunito, Pixelify Sans and Cormorant Garamond fonts are under the SIL Open Font License (`basecamp/static/fonts/LICENSE-*.txt`). Map data © OpenStreetMap contributors.
+MIT, see [LICENSE](LICENSE). The Nunito, Playfair Display and Cormorant Garamond fonts are under the SIL Open Font License (`basecamp/static/fonts/LICENSE-*.txt`). Map data © OpenStreetMap contributors.
