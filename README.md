@@ -13,8 +13,8 @@ Walk Journal finds real walks near you, writes a seasonal, place-specific photo 
 1. Tap **Find me a walk**. Pick a distance (Nearby / Walk-Run / Adventure) and a difficulty (Easy / Medium / Hard).
 2. **SerpApi** finds real parks, trails and lakes nearby. **Gemma** picks the best 3 *for right now*: season, minutes until sunset, weather.
 3. Pick one. **Gemma writes the quest**: 3–7 photo tasks, a deadline that ends before sunset, and a short spoken intro.
-4. **ElevenLabs reads it aloud.** The screen says *"Phone away. Go outside."* and nothing else.
-5. Your phone comes out only to snap a task. Each photo records live GPS and time **inside the app**.
+4. Tap **Read it to me** and **ElevenLabs reads it aloud**, or turn on "Read quests aloud as soon as I start" (off by default). The screen says *"Phone away. Go outside."* and nothing else.
+5. Your phone comes out only to snap a task. **Take photo** records live GPS and time inside the app. **Choose from gallery** uses the time and GPS saved in the photo itself.
 6. Base Camp checks the proof: **right place** (GPS radius), **right time** (quest window), **right thing** (Gemma vision).
 7. Finish with a journal note and mood. You get badges, your streak, and your screen time: *"92 seconds on screen. 48 minutes outside."*
 
@@ -111,17 +111,21 @@ Without `MONGODB_URI` the gallery falls back to SQLite. That works locally, but 
 | Check | How | Who |
 |---|---|---|
 | Right place | GPS at the shutter must be within the place radius (400 m default, 1500 m for big parks), plus GPS accuracy as tolerance (capped at 150 m) | Code |
-| Right time | Capture time must fall between quest start and deadline. Photos come from the in-app camera, not the gallery | Code |
+| Right time | Capture time must fall between quest start and deadline | Code |
+| Gallery photos | Base Camp reads the photo's EXIF time and GPS **before** stripping it. If both are there, the photo gets the same place and time checks as a camera photo and can be fully verified. Where the phone is *now* is never used for a gallery photo | Code |
 | Photo quality | Too dark, washed out, or blurry → ask for a retake instead of guessing (blur check skipped for sky and water) | Code (Pillow) |
 | Right thing | Gemma vision gets the photo + the task's `verify` text → `{match, confidence, what_i_see, reason}`. Passes at confidence ≥ 0.6 | Gemma |
 | Tracker goal | Gemma reads the watch/band screenshot → `{date, distance_mi, steps, duration_min}`. Code checks the date is today and the distance meets the goal | Gemma + code |
 
 When Gemma is unsure, the task shows **"Couldn't tell"**. You can retake it, or self-confirm it with a different, honest ✋ icon. Self-confirmed tasks never count toward badges.
 
+A gallery photo with no EXIF time or GPS still gets Gemma's content check. If it matches, the task is marked **"time/place not confirmed"** with a dashed ◐ icon. It completes the task (5 points, like a self-confirm), but never counts toward badges or the 300 m rule. Taking a photo in the app afterwards upgrades it to verified.
+
 ### Honest limits
 
 - Gemma can tell "this is a lake", not "this is *that* lake". The location check covers that.
-- Phone clocks and GPS can be spoofed. This is a personal motivation app, not an anti-cheat system.
+- Phone clocks, GPS and EXIF data can be spoofed. This is a personal motivation app, not an anti-cheat system.
+- Some phones and browsers remove location data when you pick a photo for a web page. Those photos show up honestly as "time/place not confirmed".
 - Offline captures are verified when you're back online. Time and place were recorded at the shutter, so the check is still valid later.
 
 ## Evaluation
@@ -152,7 +156,7 @@ First Grass · Leaf Peeper · Cloud Spotter · Rare Find · Explorer · Regular 
 
 ```bash
 pip install pytest
-python -m pytest tests     # 35 tests: core loop, rules, walk from here, places, journal, gallery, tracing, eval
+python -m pytest tests     # 46 tests: core loop, rules, walk from here, gallery photos + EXIF, places, journal, sky gallery, tracing, eval
 ```
 
 `BUILD_LOG.md` is the bug diary: what broke, why, and the fix.
