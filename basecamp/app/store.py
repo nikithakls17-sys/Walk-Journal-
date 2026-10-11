@@ -1,4 +1,6 @@
 """Data access helpers shared by the API routes."""
+import math
+
 from . import db
 
 # "unconfirmed": Gemma matched a gallery photo, but it had no EXIF time/GPS to confirm when and where.
@@ -74,14 +76,56 @@ def task_states(quest: dict) -> list[dict]:
     return out
 
 
+def capture_label(c: dict) -> str | None:
+    """The small honest label shown under a task."""
+    status, proof = c.get("status"), c.get("proof")
+    if status == "pass":
+        return "verified (gallery)" if proof in ("exif", "gallery_live") else "verified"
+    if status == "unconfirmed":
+        return "place not confirmed" if proof in ("no_location", "time_only") else "time/place not confirmed"
+    return None
+
+
 def public_capture(c: dict) -> dict:
     keep = ("id", "client_id", "task_id", "kind", "taken_at", "status", "place_ok", "time_ok", "quality", "gemma",
             "reason", "verified_at", "proof")
     d = {k: c.get(k) for k in keep}
+    d["label"] = capture_label(c)
     d["photo_url"] = f"/photos/{c['photo']}" if c.get("photo") else None
     if isinstance(d.get("gemma"), dict):
         d["gemma"] = {k: v for k, v in d["gemma"].items() if not k.startswith("_")}
     return d
+
+
+# ---------- completion: a walk passes at 75% of its tasks (rounded up) ----------
+
+DONE_STATUSES = {"pass", "self", "unconfirmed"}
+PASS_SHARE = 0.75
+
+
+def away_progress(q: dict) -> tuple[float, bool]:
+    """(farthest verified photo from the start in meters, whether the Walk-from-here away goal is met)."""
+    caps = [c for c in captures_for(q["id"])
+            if c["kind"] == "photo" and c["status"] in ("pass", "self") and c.get("distance_m") is not None]
+    farthest = max((c["distance_m"] for c in caps), default=0.0)
+    return farthest, farthest >= (q.get("away_goal_m") or 0)
+
+
+def needed_for(total: int) -> int:
+    """Tasks needed to complete a walk: 75%, rounded up (3 of 4, 4 of 5, 6 of 7)."""
+    return math.ceil(PASS_SHARE * total) if total else 0
+
+
+def progress(q: dict, tasks: list[dict] | None = None) -> dict:
+    """How far a walk got. Skipped tasks (Hard's rare-find skip) leave the count. Derived from the photos,
+    so older walks are judged by the same rule without rewriting their rows."""
+    tasks = tasks if tasks is not None else task_states(q)
+    counted = [t for t in tasks if t.get("status") != "skipped"]
+    done = sum(1 for t in counted if t.get("status") in DONE_STATUSES)
+    needed = needed_for(len(counted))
+    farthest, away_met = away_progress(q)
+    return {"done": done, "total": len(counted), "needed": needed, "away_met": away_met,
+            "completed": bool(counted) and done >= needed and away_met}
 
 
 def recent_task_types(limit_quests: int = 3) -> list[str]:

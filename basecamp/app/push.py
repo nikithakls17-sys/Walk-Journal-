@@ -121,10 +121,12 @@ def quest_payload(quest: dict) -> dict:
 
 def reminder_payload(kind: str) -> dict:
     if kind == "daily":
-        p = {"title": "Time to touch grass 🌱", "body": "A short walk is waiting. Tap for a quest.", "tag": "wj-daily", "url": "/#home"}
+        # Kind and easy to ignore: walking is encouraged, never required.
+        p = {"title": "Nice day for a short walk?", "body": "Only if you feel like it. A gentle quest is ready whenever you are.",
+             "tag": "wj-daily", "url": "/#home"}
     else:
-        p = {"title": "How did today feel outside?", "body": "Add a few words to your Walk Journal.", "tag": "wj-journal",
-             "url": "/#journal"}
+        p = {"title": "Want to jot down today's walk?", "body": "A few words is plenty, or skip it. Totally fine.",
+             "tag": "wj-journal", "url": "/#journal"}
     return p | {"icon": ICON, "actions": [], "action_urls": {}}
 
 

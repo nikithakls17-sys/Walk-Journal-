@@ -115,9 +115,12 @@ def tx():
 # Columns added after the first release; init() adds any that an older database is missing.
 MIGRATIONS = {
     "quests": [("mode", "TEXT DEFAULT 'place'"), ("start_lat", "REAL"), ("start_lng", "REAL"),
-               ("away_goal_m", "REAL DEFAULT 0"), ("requirement_met", "INTEGER"), ("swaps_used", "INTEGER DEFAULT 0")],
+               ("away_goal_m", "REAL DEFAULT 0"), ("requirement_met", "INTEGER"), ("swaps_used", "INTEGER DEFAULT 0"),
+               ("completed", "INTEGER")],  # 1 = 75%+ of tasks done; 0 = partial walk (set at finish, never backfilled)
     # proof: "live" (in-app camera + GPS), "exif" (gallery photo with EXIF time + GPS), "none" (gallery, no EXIF)
-    "captures": [("distance_m", "REAL"), ("proof", "TEXT DEFAULT 'live'")],
+    "captures": [("distance_m", "REAL"), ("proof", "TEXT DEFAULT 'live'"),
+                 # diagnostics for gallery photos: which EXIF fields arrived, and from which browser
+                 ("exif_time", "INTEGER"), ("exif_gps", "INTEGER"), ("user_agent", "TEXT")],
 }
 
 
