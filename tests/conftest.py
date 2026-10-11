@@ -9,7 +9,7 @@ import tempfile
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="walkjournal-test-")
 os.environ["OLLAMA_URL"] = "http://127.0.0.1:9"  # nothing listens here
 for key in ("SERPAPI_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID", "SENTRY_DSN", "GALLERY_URL",
-            "GALLERY_TOKEN", "MONGODB_URI"):
+            "GALLERY_TOKEN", "MONGODB_URI", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"):
     os.environ[key] = ""  # load_dotenv() never overrides variables that are already set
 
 

@@ -22,3 +22,7 @@ SENTRY_DSN = os.getenv("SENTRY_DSN", "")
 GALLERY_URL = os.getenv("GALLERY_URL", "").rstrip("/")
 GALLERY_TOKEN = os.getenv("GALLERY_TOKEN", "")
 PLACE_RADIUS_M = float(os.getenv("PLACE_RADIUS_M", "400"))
+# Web Push. Generate with: python -m basecamp.app.push --generate
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT") or "mailto:nikithakls17-sys@users.noreply.github.com"

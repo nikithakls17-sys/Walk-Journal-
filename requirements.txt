@@ -8,3 +8,5 @@ python-multipart>=0.0.9
 qrcode>=7.4
 sentry-sdk>=2.14
 tzdata>=2024.1
+pywebpush>=2.0
+cryptography>=47,<48

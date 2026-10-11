@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS captures (
   verified_at REAL
 );
 
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint TEXT PRIMARY KEY,
+  keys TEXT,
+  user_agent TEXT,
+  created_at REAL
+);
+
 CREATE TABLE IF NOT EXISTS badges (
   code TEXT PRIMARY KEY,
   earned_at REAL,

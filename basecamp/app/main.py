@@ -1,22 +1,34 @@
 """Base Camp: the FastAPI server that runs on the laptop next to Gemma."""
+import asyncio
 import io
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import badges, config, context, db, gallery_client, gemma, places, quests, store, tracing, tts, verify
+from . import (badges, config, context, db, gallery_client, gemma, places, push, quests, reminders, store, tracing,
+               tts, verify)
 from .geo import M_PER_MI
 
 tracing.init()
 db.init()
-app = FastAPI(title="Walk Journal Base Camp")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(reminders.loop())  # daily + journal reminders, checked once a minute
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Walk Journal Base Camp", lifespan=lifespan)
 STATIC = Path(__file__).resolve().parents[1] / "static"
 
 
@@ -28,13 +40,20 @@ class Settings(BaseModel):
     home_city: str | None = None
     units: str = "mi"
     auto_read: bool = False  # read the quest aloud as soon as it starts (off by default)
+    tz: str | None = None  # the phone's timezone, so reminders fire at the user's local time
+    # Notifications: all off until the user turns them on.
+    notify_daily: bool = False
+    daily_time: str = "17:00"
+    notify_journal: bool = False
+    journal_time: str = "20:00"
+    notify_quest: bool = False
 
 
 @app.get("/api/health")
 async def health():
     return {"ok": True, "gemma": await gemma.available(), "model": config.GEMMA_MODEL,
             "serpapi": bool(config.SERPAPI_KEY), "elevenlabs": bool(config.ELEVENLABS_API_KEY),
-            "gallery": bool(config.GALLERY_URL)}
+            "gallery": bool(config.GALLERY_URL), "push": push.enabled()}
 
 
 @app.get("/api/settings")
@@ -44,8 +63,44 @@ def get_settings():
 
 @app.post("/api/settings")
 def save_settings(s: Settings):
+    for t in (s.daily_time, s.journal_time):
+        if not reminders.valid_hhmm(t):
+            raise HTTPException(400, "times must look like 17:00")
     db.set_setting("settings", s.model_dump())
     return s
+
+
+# ---------- push notifications ----------
+
+@app.get("/api/push/key")
+def push_key():
+    if not push.enabled():
+        raise HTTPException(503, "Notifications aren't set up on Base Camp (no VAPID keys in .env).")
+    return {"key": config.VAPID_PUBLIC_KEY}
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    try:
+        push.save_subscription(await request.json(), request.headers.get("user-agent", ""))
+    except (push.PushError, ValueError, AttributeError) as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/push/unsubscribe")
+async def push_unsubscribe(request: Request):
+    push.remove_subscription((await request.json()).get("endpoint", ""))
+    return {"ok": True}
+
+
+async def push_quest_progress(qid: str):
+    """Update the single live quest notification (same tag, replaces itself) after a task changes."""
+    s = db.get_setting("settings") or {}
+    q = store.get_quest(qid)
+    if not (s.get("notify_quest") and push.enabled() and q and q["status"] == "active"):
+        return
+    await push.send_all(push.quest_payload(quest_view(qid)))
 
 
 # ---------- places ----------
@@ -267,7 +322,8 @@ USER_MESSAGES = {
 async def add_capture(qid: str, task_id: str = Form(...), client_id: str = Form(...), taken_at: float = Form(...),
                       lat: float | None = Form(None), lng: float | None = Form(None),
                       accuracy: float | None = Form(None), source: str = Form("camera"),
-                      file_modified: float | None = Form(None), photo: UploadFile = File(...)):
+                      file_modified: float | None = Form(None), photo: UploadFile = File(...),
+                      background: BackgroundTasks = None):
     existing = store.get_capture(client_id)
     if existing:
         return store.public_capture(existing)
@@ -301,6 +357,8 @@ async def add_capture(qid: str, task_id: str = Form(...), client_id: str = Form(
                    "pending", db.now(), proof))
     extra = {"file_modified": file_modified / 1000 if file_modified and file_modified > 1e11 else file_modified}
     await run_checks(cid, extra)
+    if background is not None:
+        background.add_task(push_quest_progress, qid)
     return store.public_capture(store.get_capture(cid))
 
 
@@ -390,22 +448,25 @@ async def retry_capture(cid: str):
 
 
 @app.post("/api/captures/retry-pending")
-async def retry_pending():
+async def retry_pending(background: BackgroundTasks):
     with db.tx() as conn:
-        ids = [r["id"] for r in conn.execute("SELECT id FROM captures WHERE status='pending'").fetchall()]
-    for cid in ids:
-        await run_checks(cid)
-    return {"retried": len(ids)}
+        rows = conn.execute("SELECT id, quest_id FROM captures WHERE status='pending'").fetchall()
+    for r in rows:
+        await run_checks(r["id"])
+    for qid in {r["quest_id"] for r in rows}:
+        background.add_task(push_quest_progress, qid)
+    return {"retried": len(rows)}
 
 
 @app.post("/api/captures/{cid}/self-confirm")
-def self_confirm(cid: str):
+def self_confirm(cid: str, background: BackgroundTasks):
     c = store.get_capture(cid) or _404()
     if c["status"] not in ("unsure", "pending"):
         raise HTTPException(400, "only photos Gemma couldn't judge can be self-confirmed")
     if c["kind"] == "photo" and not (c["place_ok"] and c["time_ok"]):
         raise HTTPException(400, "place and time checks must pass first")
     store.update_capture(c["id"], status="self", reason="You confirmed this one yourself.", verified_at=time.time())
+    background.add_task(push_quest_progress, c["quest_id"])
     return store.public_capture(store.get_capture(c["id"]))
 
 
