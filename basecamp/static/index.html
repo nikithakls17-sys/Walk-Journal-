@@ -54,10 +54,6 @@
         <button id="walk-here" class="btn big">Walk from here</button>
         <p class="muted hint">No destination: a walk around wherever you are. Photos count anywhere within your distance.</p>
       </div>
-      <div class="card">
-        <label class="toggle"><input type="checkbox" id="auto-read"><span>Read quests aloud as soon as I start</span></label>
-        <p class="muted hint">Off by default. You can always tap “Read it to me” on the quest screen.</p>
-      </div>
       <div id="resume" class="card" hidden>
         <p>You have a quest in progress: <strong id="resume-title"></strong></p>
         <button id="resume-btn" class="btn">Continue</button>
@@ -84,6 +80,29 @@
         <div id="j-badges" class="shelf"></div>
       </div>
       <div id="j-entries"></div>
+    </section>
+
+    <!-- Settings -->
+    <section id="v-settings" class="view" hidden>
+      <div class="card">
+        <h2>Settings</h2>
+        <h3>Voice</h3>
+        <label class="toggle"><input type="checkbox" id="auto-read"><span>Read quests aloud as soon as I start</span></label>
+        <p class="muted hint">Off by default. You can always tap “Read it to me” on the quest screen.</p>
+      </div>
+      <div class="card">
+        <h3>Notifications</h3>
+        <p class="ios-note">📱 <b>iPhone:</b> tap Share → <b>Add to Home Screen</b> first, then open Walk Journal from that icon.
+          iPhones only allow notifications for apps on the Home Screen (iOS 16.4 or later).</p>
+        <label class="toggle"><input type="checkbox" id="n-daily"><span>Daily walk reminder</span></label>
+        <label class="time-row">Remind me at <input type="time" id="n-daily-time" value="17:00"></label>
+        <label class="toggle"><input type="checkbox" id="n-journal"><span>Evening journal reminder<small>Only if you haven't written in your journal today</small></span></label>
+        <label class="time-row">Remind me at <input type="time" id="n-journal-time" value="20:00"></label>
+        <label class="toggle"><input type="checkbox" id="n-quest"><span>Quest progress<small>One notification with your tasks that updates itself: “2 of 5 done”</small></span></label>
+        <p class="muted hint" id="notif-status"></p>
+        <p class="muted hint">Notifications are text only: never photos, never locations. Reminders come from Base Camp, so your
+          laptop needs to be on with Base Camp running. If Base Camp's link changes, open the new link and turn them on again.</p>
+      </div>
     </section>
 
     <!-- Loading -->
@@ -145,6 +164,7 @@
       <div class="card note">
         <h2 id="sum-title"></h2>
         <p class="big-stat" id="sum-screen"></p>
+        <p class="muted hint">Measures time in Walk Journal only.</p>
         <p id="sum-points" class="muted"></p>
         <div id="sum-badges" class="badges"></div>
         <ul id="sum-tasks" class="tasks"></ul>
@@ -174,6 +194,7 @@
     <a href="#home">Walk</a>
     <a href="#map">Map</a>
     <a href="#journal">Journal</a>
+    <a href="#settings">Settings</a>
   </nav>
 
   <div class="grass" aria-hidden="true"></div>

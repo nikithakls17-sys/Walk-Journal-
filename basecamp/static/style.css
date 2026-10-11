@@ -211,6 +211,12 @@ body[data-view=away] { background: linear-gradient(var(--sky-top), var(--sky-bot
 .pin.solid.home span { background: var(--wheat); color: var(--bark); }
 .legend { text-align: center; font-size: .85rem; }
 .hint { font-size: .85rem; margin: -2px 4px 4px; }
+h3 { margin: 4px 0 8px; font-size: 1.1rem; }
+.toggle small { display: block; font-size: .8rem; font-weight: 600; color: var(--muted); }
+.time-row { display: flex; align-items: center; gap: 10px; margin: 0 0 14px 36px; font-weight: 600; color: var(--muted); }
+.time-row input { width: auto; margin: 0; padding: 8px 10px; }
+.ios-note { background: var(--bg); border: 2px dashed var(--soft); border-radius: 14px; padding: 10px 14px; font-size: .9rem; }
+.tabs a { padding: 16px 4px; font-size: .95rem; }
 .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: middle; }
 .dot.solid { background: var(--meadow); } .dot.faded { background: var(--sage); opacity: .55; }
 .visit { margin-top: 8px; font-size: .85rem; }

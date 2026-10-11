@@ -1,5 +1,5 @@
 // Walk Journal service worker: the app shell works with no signal at the park.
-const SHELL = "wj-shell-v4";
+const SHELL = "wj-shell-v5";
 const RUNTIME = "wj-runtime-v1";
 const SHELL_FILES = [
   "/", "/index.html", "/app.js", "/queue.js", "/style.css", "/manifest.json",
@@ -43,6 +43,33 @@ self.addEventListener("fetch", (e) => {
       return hit || net;
     }),
   );
+});
+
+// ---------- notifications (text only: never photos or locations) ----------
+
+self.addEventListener("push", (e) => {
+  let d = {};
+  try { d = e.data.json(); } catch { d = { title: "Walk Journal", body: e.data?.text() || "" }; }
+  e.waitUntil(self.registration.showNotification(d.title || "Walk Journal", {
+    body: d.body || "", tag: d.tag, icon: d.icon || "/icons/icon-192.png", renotify: !!d.renotify, silent: !!d.silent,
+    actions: d.actions || [], data: { url: d.url || "/", action_urls: d.action_urls || {} },
+  }));
+});
+
+self.addEventListener("notificationclick", (e) => {
+  const data = e.notification.data || {};
+  const url = (e.action && data.action_urls?.[e.action]) || data.url || "/";
+  e.notification.close();
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const win = wins.find((w) => new URL(w.url).origin === location.origin);
+    if (win) {
+      await win.focus();
+      win.postMessage({ type: "open", url });
+    } else {
+      await self.clients.openWindow(url);
+    }
+  })());
 });
 
 async function cacheFirst(req, name, isTile) {

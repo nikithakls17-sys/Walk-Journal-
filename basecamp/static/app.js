@@ -55,7 +55,8 @@ const views = {};
 function show(name, msg) {
   $$(".view").forEach((v) => (v.hidden = v.id !== `v-${name}`));
   document.body.dataset.view = name;
-  const tab = { home: "home", suggest: "home", intro: "home", summary: "home", finish: "home", map: "map", journal: "journal" }[name];
+  const tab = { home: "home", suggest: "home", intro: "home", summary: "home", finish: "home", map: "map", journal: "journal",
+    settings: "settings" }[name];
   $$(".tabs a").forEach((a) => a.classList.toggle("on", a.getAttribute("href") === `#${tab}`));
   if (name === "loading") $("#loading-msg").textContent = msg || "Thinking about your walk…";
   views[name]?.();
@@ -66,6 +67,7 @@ function route() {
   const h = location.hash.slice(1) || "home";
   if (!store.get("settings")?.home_lat && h !== "setup") return show("setup");
   if (h === "quest") return resumeQuest();
+  if (h.startsWith("snap/")) return snapFromNotification(h.slice(5));
   show(h in views || $(`#v-${h}`) ? h : "home");
 }
 window.addEventListener("hashchange", route);
@@ -151,13 +153,12 @@ const autoRead = () => !!store.get("settings", {}).auto_read;
 // ---------- home ----------
 
 views.home = () => {
-  $("#auto-read").checked = autoRead();
   const q = store.get("quest");
   $("#resume").hidden = !(q && !q.finished_at);
   if (q) $("#resume-title").textContent = q.title;
 };
 $("#resume-btn").onclick = () => resumeQuest();
-$("#auto-read").onchange = (e) => saveSettings({ auto_read: e.target.checked });
+
 const choice = (name) => document.querySelector(`input[name=${name}]:checked`).value;
 
 $("#walk-here").onclick = async () => {
@@ -307,6 +308,7 @@ $("#intro-start").onclick = async () => {
   screenTime.start();
   if (autoRead()) speak(quest);
   show("away");
+  showQuestNotification();
   await Outbox.add({ kind: "start", questId: quest.id, body: { started_at: startedAt } });
   sync();
 };
@@ -471,6 +473,7 @@ $("#task-list").onclick = async (e) => {
 async function refreshQuest() {
   try { saveQuest(await api(`/api/quests/${quest.id}`)); } catch {}
   if (document.body.dataset.view === "away") renderTasks();
+  showQuestNotification();
 }
 
 // ---------- camera ----------
@@ -646,6 +649,7 @@ $("#finish-save").onclick = async () => {
     outside_seconds: body.finished_at - (quest.started_at || quest.local.started), new_badges: [], points: null });
   store.set("quest", quest);
   stopGps();
+  closeQuestNotification();
   await Outbox.add({ kind: "finish", questId: quest.id, body });
   show("summary");
   sync();
@@ -721,6 +725,138 @@ views.journal = async () => {
     </article>`;
   }).join("");
 };
+
+// ---------- settings + notifications ----------
+// Web Push from Base Camp for reminders; the live quest notification is shown by the phone itself and
+// refreshed by Base Camp after each photo is checked. Same tag, so it replaces itself. Text only.
+
+const QUEST_TAG = "wj-quest";
+const DONE = ["pass", "self", "unconfirmed", "skipped"];
+const settings = () => store.get("settings", {});
+
+views.settings = () => {
+  const s = settings();
+  $("#auto-read").checked = !!s.auto_read;
+  $("#n-daily").checked = !!s.notify_daily;
+  $("#n-daily-time").value = s.daily_time || "17:00";
+  $("#n-journal").checked = !!s.notify_journal;
+  $("#n-journal-time").value = s.journal_time || "20:00";
+  $("#n-quest").checked = !!s.notify_quest;
+  $("#notif-status").textContent = notifSupport().message;
+};
+$("#auto-read").onchange = (e) => saveSettings({ auto_read: e.target.checked });
+
+function notifSupport() {
+  if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window))
+    return { ok: false, message: "This browser can't show notifications here. On iPhone, add Walk Journal to your Home Screen first." };
+  if (Notification.permission === "denied")
+    return { ok: false, message: "Notifications are blocked for this site. Allow them in your browser settings to turn these on." };
+  return { ok: true, message: Notification.permission === "granted" ? "Notifications are allowed." : "" };
+}
+
+function b64ToBytes(b64) {
+  const s = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+
+// Ask permission and subscribe this device to Base Camp's push. Returns false if it can't.
+async function enableNotifications() {
+  const support = notifSupport();
+  if (!support.ok) { $("#notif-status").textContent = support.message; return false; }
+  if ((await Notification.requestPermission()) !== "granted") {
+    $("#notif-status").textContent = "Notifications weren't allowed, so these stay off.";
+    return false;
+  }
+  try {
+    const { key } = await api("/api/push/key");
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription())
+      || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) }));
+    await api("/api/push/subscribe", { json: sub.toJSON() });
+    $("#notif-status").textContent = "Notifications are on for this device.";
+    return true;
+  } catch (e) {
+    $("#notif-status").textContent = `Couldn't turn on reminders: ${e.message}`;
+    return false;
+  }
+}
+
+async function disableNotifications() {
+  try {
+    const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+    if (sub) {
+      await api("/api/push/unsubscribe", { json: { endpoint: sub.endpoint } }).catch(() => {});
+      await sub.unsubscribe();
+    }
+  } catch {}
+}
+
+async function onNotifToggle(e) {
+  const changes = {
+    notify_daily: $("#n-daily").checked, daily_time: $("#n-daily-time").value || "17:00",
+    notify_journal: $("#n-journal").checked, journal_time: $("#n-journal-time").value || "20:00",
+    notify_quest: $("#n-quest").checked, tz: TZ,
+  };
+  const anyOn = changes.notify_daily || changes.notify_journal || changes.notify_quest;
+  if (e.target.type === "checkbox" && e.target.checked && !(await enableNotifications())) {
+    e.target.checked = false;
+    changes[{ "n-daily": "notify_daily", "n-journal": "notify_journal", "n-quest": "notify_quest" }[e.target.id]] = false;
+  } else if (!anyOn) {
+    await disableNotifications();
+  }
+  await saveSettings(changes);
+  if (!changes.notify_quest) closeQuestNotification();
+}
+["#n-daily", "#n-daily-time", "#n-journal", "#n-journal-time", "#n-quest"].forEach((s) => ($(s).onchange = onNotifToggle));
+
+// Same shape Base Camp sends (push.quest_payload): no photos, no place, no coordinates.
+function questNotification(q) {
+  const done = q.tasks.filter((t) => DONE.includes(t.local_status || t.status));
+  const next = q.tasks.find((t) => !DONE.includes(t.local_status || t.status));
+  const body = q.tasks.map((t) => `${DONE.includes(t.local_status || t.status) ? "✓" : "○"} ${t.prompt}`).join("\n");
+  if (!next) return { title: `${q.title}: all ${q.tasks.length} done!`, body: `Tap to finish and write in your journal.\n${body}`, actions: [], url: "/#quest", action_urls: {} };
+  const photo = next.kind === "photo";
+  return {
+    title: `${q.title}: ${done.length} of ${q.tasks.length} done`, body,
+    actions: photo ? [{ action: "snap", title: "Take photo" }] : [], url: "/#quest",
+    action_urls: photo ? { snap: `/#snap/${next.id}` } : {},
+  };
+}
+
+async function showQuestNotification() {
+  if (!quest || quest.local?.done || !quest.local?.started || !settings().notify_quest) return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    const n = questNotification(quest);
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification(n.title, { body: n.body, tag: QUEST_TAG, renotify: false, silent: true, icon: "/icons/icon-192.png",
+      actions: n.actions, data: { url: n.url, action_urls: n.action_urls } });
+  } catch {}
+}
+
+async function closeQuestNotification() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    (await reg.getNotifications({ tag: QUEST_TAG })).forEach((n) => n.close());
+  } catch {}
+}
+
+function snapFromNotification(taskId) {
+  quest = store.get("quest");
+  const task = quest?.tasks.find((t) => t.id === taskId);
+  if (!task || quest.finished_at) return show("home");
+  history.replaceState(null, "", "#quest");
+  show("away");
+  openCamera(task);
+}
+
+// The service worker forwards notification taps here.
+navigator.serviceWorker?.addEventListener("message", (e) => {
+  if (e.data?.type === "open" && e.data.url) {
+    const hash = new URL(e.data.url, location.origin).hash;
+    if (location.hash === hash) route(); else location.hash = hash;
+  }
+});
 
 // ---------- swaying grass ----------
 
