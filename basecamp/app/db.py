@@ -115,7 +115,7 @@ def tx():
 # Columns added after the first release; init() adds any that an older database is missing.
 MIGRATIONS = {
     "quests": [("mode", "TEXT DEFAULT 'place'"), ("start_lat", "REAL"), ("start_lng", "REAL"),
-               ("away_goal_m", "REAL DEFAULT 0"), ("requirement_met", "INTEGER")],
+               ("away_goal_m", "REAL DEFAULT 0"), ("requirement_met", "INTEGER"), ("swaps_used", "INTEGER DEFAULT 0")],
     # proof: "live" (in-app camera + GPS), "exif" (gallery photo with EXIF time + GPS), "none" (gallery, no EXIF)
     "captures": [("distance_m", "REAL"), ("proof", "TEXT DEFAULT 'live'")],
 }

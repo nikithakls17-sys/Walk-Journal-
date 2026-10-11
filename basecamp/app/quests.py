@@ -202,6 +202,34 @@ def home_place(lat: float, lng: float) -> dict:
             "lat": lat, "lng": lng}
 
 
+def check_task(t: dict, ctx: dict, place: dict, used: set[str], recent: set[str] = frozenset()) -> tuple[dict | None, str | None]:
+    """Validate one Gemma task against every rule. Returns (clean task, None) or (None, why it was dropped).
+    Used for whole quests and for single-task swaps, so both follow exactly the same rules."""
+    if not t.get("prompt"):
+        return None, None
+    text = f"{t.get('prompt', '')} {t.get('verify', '')}"
+    label = (t.get("type_label") or "").lower().strip()
+    from_here = ctx.get("mode") == "from_here"
+    if is_unsafe(text):
+        return None, f"dropped unsafe task: {t['prompt']}"
+    if from_here and NO_DESTINATION.search(text):
+        return None, f"dropped destination task on a walk from here: {t['prompt']}"
+    bad = unsupported_features(text, place)
+    if bad:
+        return None, f"dropped task with invented feature {bad}: {t['prompt']}"
+    if t.get("category") == "sky" and ctx.get("night_quest") and not NIGHT_SKY.search(text):
+        return None, f"dropped daytime sky task at night: {t['prompt']}"
+    if label and (label in recent or label in used):
+        return None, f"dropped repeated task type '{label}'"
+    specific = bool(t.get("place_specific")) and not from_here
+    if specific and not place_features(place) and place["name"].lower() not in text.lower():
+        specific = False
+    return {"kind": "photo", "prompt": t["prompt"].strip(), "verify": (t.get("verify") or t["prompt"]).strip(),
+            "category": t.get("category") if t.get("category") in CATEGORIES else "other",
+            "type_label": label or "photo", "place_specific": specific,
+            "rare": bool(t.get("rare")) and ctx["difficulty"] == "hard"}, None
+
+
 def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
     """Validate and repair a Gemma quest. Returns the quest and the repairs made."""
     difficulty, season = ctx["difficulty"], ctx["season"]
@@ -214,34 +242,12 @@ def enforce_rules(raw: dict, ctx: dict, place: dict) -> tuple[dict, list[str]]:
 
     tasks = []
     for t in raw.get("tasks", []):
-        if not t.get("prompt"):
-            continue
-        text = f"{t.get('prompt', '')} {t.get('verify', '')}"
-        label = (t.get("type_label") or "").lower().strip()
-        if is_unsafe(text):
-            notes.append(f"dropped unsafe task: {t['prompt']}")
-            continue
-        if from_here and NO_DESTINATION.search(text):
-            notes.append(f"dropped destination task on a walk from here: {t['prompt']}")
-            continue
-        bad = unsupported_features(text, place)
-        if bad:
-            notes.append(f"dropped task with invented feature {bad}: {t['prompt']}")
-            continue
-        if t.get("category") == "sky" and night and not NIGHT_SKY.search(text):
-            notes.append(f"dropped daytime sky task at night: {t['prompt']}")
-            continue
-        if label and (label in recent or label in used):
-            notes.append(f"dropped repeated task type '{label}'")
-            continue
-        specific = bool(t.get("place_specific")) and not from_here
-        if specific and not place_features(place) and place["name"].lower() not in text.lower():
-            specific = False
-        used.add(label)
-        tasks.append({"kind": "photo", "prompt": t["prompt"].strip(), "verify": (t.get("verify") or t["prompt"]).strip(),
-                      "category": t.get("category") if t.get("category") in CATEGORIES else "other",
-                      "type_label": label or "photo", "place_specific": specific,
-                      "rare": bool(t.get("rare")) and difficulty == "hard"})
+        task, note = check_task(t, ctx, place, used, recent)
+        if note:
+            notes.append(note)
+        if task:
+            used.add((t.get("type_label") or "").lower().strip())
+            tasks.append(task)
 
     want_place = 0 if from_here else {"easy": 0, "medium": 1, "hard": 2}[difficulty]
     want_rare = 1 if difficulty == "hard" else 0
@@ -335,6 +341,66 @@ def fallback_quest(ctx: dict, place: dict) -> dict:
         raw["tasks"].append({"prompt": "Catch the evening sky before sunset", "verify": "the sky at sunset or dusk",
                              "category": "sky", "type_label": "sunset sky"})
     return enforce_rules(raw, ctx, place)[0]
+
+
+SWAP_LIMITS = {"easy": 1, "medium": 2, "hard": 2}  # separate from the Hard rare-find skip
+TASK_SCHEMA = QUEST_SCHEMA["properties"]["tasks"]["items"]
+
+
+async def swap_task(ctx: dict, place: dict, old: dict, others: list[dict], attempts: int = 2) -> tuple[dict, str, list[str]]:
+    """One replacement task with the quest's own context and every rule. Returns (task, source, notes).
+    Never repeats a task type already in this quest (including the one being swapped out)."""
+    used = {(t.get("type_label") or "").lower() for t in others + [old]}
+    need_specific = bool(old.get("place_specific")) and ctx.get("mode") != "from_here"
+    need_rare = bool(old.get("rare"))
+    asks = []
+    if need_specific:
+        asks.append("It must be place-specific (place_specific=true) and only use features listed for the place.")
+    if need_rare:
+        asks.append("It must be a rare find (rare=true) that might not be possible this time of year.")
+    if ctx.get("mode") == "from_here":
+        asks.append("This is a walk from home with no destination: no parks, trails, lakes or landmarks.")
+    facts = {k: v for k, v in ctx.items() if k not in ("sunset_ts", "repairs")}
+    facts["place"] = {k: v for k, v in ctx.get("place", {}).items() if k not in ("lat", "lng")}
+    prompt = (f"FACTS:\n{json.dumps(facts, indent=1)}\n\n"
+              f"The walker wants to swap out this task: {old['prompt']!r}.\n"
+              f"Write ONE different photo task for the same walk. {' '.join(asks)}\n"
+              f"Do not repeat any of these task types: {sorted(l for l in used if l)}.\n"
+              f"Tasks already in this quest: {[t['prompt'] for t in others]}.")
+    notes: list[str] = []
+    for _ in range(attempts):
+        try:
+            raw = await gemma.chat(prompt, TASK_SCHEMA, system=SYSTEM, temperature=0.9, operation="swap_task",
+                                   outcome=lambda r: "swap_ok" if check_task(r, ctx, place, used)[0] else "swap_rejected")
+        except gemma.GemmaError as e:
+            notes.append(str(e))
+            break
+        task, note = check_task(raw, ctx, place, used)
+        if note:
+            notes.append(note)
+        if task and need_specific and not task["place_specific"]:
+            notes.append(f"dropped swap that wasn't place-specific: {task['prompt']}")
+            task = None
+        if task:
+            task["rare"] = need_rare
+            return task, "gemma", notes
+    return _swap_fallback(ctx, place, used, need_specific, need_rare), "fallback", notes
+
+
+def _swap_fallback(ctx: dict, place: dict, used: set[str], need_specific: bool, need_rare: bool) -> dict:
+    """Code-written replacement from the same banks, used when Gemma is unreachable or keeps breaking rules."""
+    night = ctx.get("night_quest")
+    if need_specific:
+        for k in range(3):
+            t = _place_task(place, k)
+            if t["type_label"] not in used:
+                return t
+    pools = ([_bank(ctx["season"], used, rare=True)] if need_rare else []) + [_bank(ctx["season"], used)]
+    for pool in pools:
+        for t in pool:
+            if not (night and t["category"] == "sky"):
+                return t | {"rare": need_rare}
+    return _task(("Find something that makes you smile", "an outdoor scene", "other", "smile find"), rare=need_rare)
 
 
 def _quest_outcome(raw: dict, ctx: dict, place: dict) -> str:

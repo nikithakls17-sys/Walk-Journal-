@@ -265,7 +265,7 @@ def quest_view(qid: str) -> dict:
         "mode": q.get("mode") or "place", "start": {"lat": q["start_lat"], "lng": q["start_lng"]} if q.get("start_lat") is not None else None,
         "radius_m": from_here_radius_m(q["distance_tier"]) if q.get("mode") == "from_here" else None,
         "away_goal_m": q.get("away_goal_m") or 0, "farthest_m": round(farthest), "away_met": away_met,
-        "requirement_met": q.get("requirement_met"),
+        "requirement_met": q.get("requirement_met"), "swaps_left": swaps_left(q),
     }
 
 
@@ -291,6 +291,47 @@ def start_quest(qid: str, s: Start):
 
 class Skip(BaseModel):
     task_id: str
+
+
+SWAPPABLE = {"todo", "fail", "retake", "unsure"}  # unfinished, and not waiting on a check
+
+
+def swaps_left(q: dict) -> int:
+    return max(0, quests.SWAP_LIMITS[q["difficulty"]] - (q.get("swaps_used") or 0))
+
+
+@app.post("/api/quests/{qid}/swap")
+async def swap_task(qid: str, s: Skip, background: BackgroundTasks):
+    """Replace one unfinished photo task with a new one from Gemma. No point penalty."""
+    q = store.get_quest(qid) or _404()
+    if q["status"] == "done":
+        raise HTTPException(400, "This quest is finished.")
+    if swaps_left(q) < 1:
+        raise HTTPException(400, "No swaps left on this quest.")
+    states = {t["id"]: t for t in store.task_states(q)}
+    old = states.get(s.task_id)
+    if not old:
+        raise HTTPException(404, "unknown task")
+    if old["kind"] != "photo":
+        raise HTTPException(400, "Only photo tasks can be swapped.")
+    if old["status"] not in SWAPPABLE:
+        raise HTTPException(400, "Only unfinished tasks can be swapped.")
+    ctx = dict(q["context"] or {})
+    ctx.setdefault("mode", q.get("mode") or "place")
+    if ctx["mode"] == "from_here":
+        place = quests.home_place(q["start_lat"], q["start_lng"])
+    else:
+        place = store.get_place(q["place_id"])
+    others = [t for t in q["tasks"] if t["id"] != s.task_id]
+    new, source, notes = await quests.swap_task(ctx, place, old, others)
+    # A fresh id, so photos taken for the old task never count for the new one.
+    new["id"] = f"t{len(q['tasks']) + (q.get('swaps_used') or 0) + 1}"
+    new["swapped_from"] = old["prompt"]
+    tasks = [new if t["id"] == s.task_id else t for t in q["tasks"]]
+    store.update_quest(qid, tasks=tasks, swaps_used=(q.get("swaps_used") or 0) + 1)
+    background.add_task(push_quest_progress, qid)
+    return quest_view(qid) | {"swap": {"replaced": old["prompt"], "with": new["prompt"], "source": source,
+                                       "notes": notes}}
 
 
 @app.post("/api/quests/{qid}/skip")

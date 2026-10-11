@@ -153,6 +153,7 @@ input:not([type=radio]), textarea { width: 100%; font: inherit; font-weight: 400
 .task .body small, .task .body em { font-size: .85rem; color: var(--muted); }
 .task img { max-width: 100%; border-radius: 12px; margin-top: 8px; }
 .task { flex-wrap: wrap; }
+.tasks .swaps { padding: 4px 0 8px; font-size: .9rem; font-weight: 700; border-bottom: 1px dashed var(--soft); }
 .task .acts { display: flex; flex-wrap: wrap; gap: 8px; flex-basis: 100%; padding-left: 46px; }
 .task .acts:empty { display: none; }
 .s-pass .ico { background: var(--meadow); border-color: var(--meadow); color: #fff; }

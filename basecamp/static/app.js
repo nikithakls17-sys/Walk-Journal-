@@ -434,8 +434,15 @@ function awayRequirement() {
     <em>${met ? "done" : `farthest verified photo so far: ${quest.farthest_m || 0} m`}</em></div></li>`;
 }
 
+const SWAPPABLE = ["todo", "fail", "retake", "unsure"];
+
+function swapsLine() {
+  if (quest.swaps_left == null || quest.finished_at) return "";
+  return `<li class="swaps muted">🔄 Swaps left: ${quest.swaps_left}</li>`;
+}
+
 function renderTasks() {
-  $("#task-list").innerHTML = awayRequirement() + quest.tasks.map((t) => {
+  $("#task-list").innerHTML = swapsLine() + awayRequirement() + quest.tasks.map((t) => {
     const st = t.local_status || t.status;
     const reason = t.capture?.reason && st !== "pass" ? `<small>${esc(t.capture.reason)}</small>` : "";
     const done = ["pass", "self", "skipped"].includes(st);
@@ -446,6 +453,8 @@ function renderTasks() {
         `<button class="btn small ghost" data-act="gallery" data-id="${t.id}">Choose from gallery</button>`);
       if (st === "unsure" && t.capture) actions.push(`<button class="btn small ghost" data-act="self" data-cid="${t.capture.id}">It's right</button>`);
       if (quest.skips_left > 0 && quest.difficulty === "hard") actions.push(`<button class="btn small ghost" data-act="skip" data-id="${t.id}">Skip</button>`);
+      if (t.kind === "photo" && quest.swaps_left > 0 && SWAPPABLE.includes(st))
+        actions.push(`<button class="btn small ghost" data-act="swap" data-id="${t.id}">Swap this task</button>`);
     }
     return `<li class="task s-${st}">
       <span class="ico" title="${STATUS_TEXT[st]}">${STATUS_ICON[st] || "○"}</span>
@@ -465,10 +474,31 @@ $("#task-list").onclick = async (e) => {
   if (act === "self") {
     try { await api(`/api/captures/${cid}/self-confirm`, { method: "POST" }); await refreshQuest(); } catch (err) { toast(err.message); }
   }
+  if (act === "swap") return swapTask(id, b);
   if (act === "skip") {
     try { saveQuest(await api(`/api/quests/${quest.id}/skip`, { json: { task_id: id } })); renderTasks(); } catch (err) { toast(err.message); }
   }
 };
+
+async function swapTask(taskId, button) {
+  if (!online) return toast("Swapping needs Base Camp. Try again when you're back online.");
+  button.disabled = true;
+  button.textContent = "Swapping…";
+  toast("Gemma is finding a different task…", 60000);
+  try {
+    const res = await api(`/api/quests/${quest.id}/swap`, { json: { task_id: taskId } });
+    saveQuest(res);
+    renderTasks();
+    showQuestNotification();
+    toast(`New task: ${res.swap.with}`);
+    // The cached read-aloud audio still has the old task in it.
+    try { await (await caches.open(AUDIO_CACHE)).delete(`/api/quests/${quest.id}/audio`); } catch {}
+    prefetchAudio(quest);
+  } catch (e) {
+    toast(e.message);
+    renderTasks();
+  }
+}
 
 async function refreshQuest() {
   try { saveQuest(await api(`/api/quests/${quest.id}`)); } catch {}
