@@ -212,6 +212,9 @@ body[data-view=away] { background: linear-gradient(var(--sky-top), var(--sky-bot
 .pin.solid.home span { background: var(--wheat); color: var(--bark); }
 .legend { text-align: center; font-size: .85rem; }
 .hint { font-size: .85rem; margin: -2px 4px 4px; }
+.location-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 14px 18px; }
+.location-card .home-line { margin: 0; font-size: .9rem; }
+.home-line { margin: 0 0 8px; }
 h3 { margin: 4px 0 8px; font-size: 1.1rem; }
 .toggle small { display: block; font-size: .8rem; font-weight: 600; color: var(--muted); }
 .time-row { display: flex; align-items: center; gap: 10px; margin: 0 0 14px 36px; font-weight: 600; color: var(--muted); }

@@ -54,6 +54,10 @@
         <button id="walk-here" class="btn big">Walk from here</button>
         <p class="muted hint">No destination: a walk around wherever you are. Photos count anywhere within your distance.</p>
       </div>
+      <div class="card location-card">
+        <p class="muted home-line"></p>
+        <button class="btn ghost update-location">📍 Update my location</button>
+      </div>
       <div id="resume" class="card" hidden>
         <p>You have a quest in progress: <strong id="resume-title"></strong></p>
         <button id="resume-btn" class="btn">Continue</button>
@@ -86,6 +90,10 @@
     <section id="v-settings" class="view" hidden>
       <div class="card">
         <h2>Settings</h2>
+        <h3>Location</h3>
+        <p class="muted home-line"></p>
+        <button class="btn ghost update-location">📍 Update my location</button>
+        <p class="muted hint">Uses your current GPS. "Walk from here" always uses fresh GPS on its own.</p>
         <h3>Voice</h3>
         <label class="toggle"><input type="checkbox" id="auto-read"><span>Read quests aloud as soon as I start</span></label>
         <p class="muted hint">Off by default. You can always tap “Read it to me” on the quest screen.</p>

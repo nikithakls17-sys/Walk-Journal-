@@ -88,14 +88,17 @@ function stopGps() {
   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
   watchId = null;
 }
-function getFix(maxAgeMs = 15000) {
-  if (lastFix && Date.now() - lastFix.at < maxAgeMs) return Promise.resolve(lastFix);
+// maxAgeMs: how old a position may be. { fresh: true } ignores every cached position and waits for a new reading.
+// If GPS fails, this resolves null rather than handing back an old position from somewhere else.
+function getFix(maxAgeMs = 15000, { fresh = false } = {}) {
+  const recent = (f) => f && Date.now() - f.at < maxAgeMs;
+  if (!fresh && recent(lastFix)) return Promise.resolve(lastFix);
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve(null);
     navigator.geolocation.getCurrentPosition(
       (p) => resolve((lastFix = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, at: Date.now() })),
-      () => resolve(lastFix),
-      { enableHighAccuracy: true, maximumAge: maxAgeMs, timeout: 10000 },
+      () => resolve(!fresh && recent(lastFix) ? lastFix : null),
+      { enableHighAccuracy: true, maximumAge: fresh ? 0 : maxAgeMs, timeout: fresh ? 20000 : 10000 },
     );
   });
 }
@@ -153,6 +156,7 @@ const autoRead = () => !!store.get("settings", {}).auto_read;
 // ---------- home ----------
 
 views.home = () => {
+  showHomeLine();
   const q = store.get("quest");
   $("#resume").hidden = !(q && !q.finished_at);
   if (q) $("#resume-title").textContent = q.title;
@@ -162,11 +166,42 @@ $("#resume-btn").onclick = () => resumeQuest();
 const choice = (name) => document.querySelector(`input[name=${name}]:checked`).value;
 
 $("#walk-here").onclick = async () => {
-  show("loading", "Finding where you're starting…");
-  const fix = await getFix(10000);
-  if (!fix) { toast("Walk from here needs your location."); return show("home"); }
+  show("loading", "Getting a fresh GPS fix for your start…");
+  const fix = await getFix(0, { fresh: true });
+  if (!fix) {
+    toast("Couldn't get a fresh GPS fix. Walk from here starts exactly where you are, so check location is on and try again.", 7000);
+    return show("home");
+  }
   await makeQuest({ mode: "from_here", lat: fix.lat, lng: fix.lng });
 };
+
+// ---------- update my location ----------
+// The saved home (from setup) is used for the Home walks pin, the map's starting view, and as a backup
+// when GPS isn't available for "Find me a walk". This replaces it with a fresh GPS reading.
+
+async function updateMyLocation(button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Getting fresh GPS…";
+  try {
+    const fix = await getFix(0, { fresh: true });
+    if (!fix) return toast("Couldn't get a GPS fix. Check that location is on for this site, then try again.", 7000);
+    const city = await cityFor(fix.lat, fix.lng);
+    await saveSettings({ home_lat: fix.lat, home_lng: fix.lng, home_city: city });
+    toast(`Location updated${city ? `: ${city}` : ""} (±${Math.round(fix.accuracy)} m)`);
+    showHomeLine();
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+function showHomeLine() {
+  const s = store.get("settings", {});
+  const where = s.home_city || (s.home_lat != null ? `${(+s.home_lat).toFixed(2)}, ${(+s.home_lng).toFixed(2)}` : "not set");
+  $$(".home-line").forEach((el) => (el.textContent = `Saved location: ${where}`));
+}
+$$(".update-location").forEach((b) => (b.onclick = () => updateMyLocation(b)));
 
 async function makeQuest(target) {
   show("loading", "Gemma is writing your quest…");
@@ -767,6 +802,7 @@ const settings = () => store.get("settings", {});
 views.settings = () => {
   const s = settings();
   $("#auto-read").checked = !!s.auto_read;
+  showHomeLine();
   $("#n-daily").checked = !!s.notify_daily;
   $("#n-daily-time").value = s.daily_time || "17:00";
   $("#n-journal").checked = !!s.notify_journal;
