@@ -11,7 +11,8 @@
   <title>Walk Journal</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="preload" href="/fonts/nunito-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/fonts/pixelify-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/playfair-display-latin-800-italic.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/cormorant-garamond-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -37,7 +38,7 @@
 
     <!-- Home -->
     <section id="v-home" class="view" hidden>
-      <div class="card">
+      <div class="card lace">
         <h2>Ready to go outside?</h2>
         <fieldset class="choices">
           <legend>Distance</legend>
@@ -80,7 +81,7 @@
 
     <!-- Journal -->
     <section id="v-journal" class="view" hidden>
-      <div class="card diary-cover">
+      <div class="card lace diary-cover">
         <h2>My walk diary</h2>
         <p class="streak" id="j-streak"></p>
         <div id="j-badges" class="shelf"></div>
@@ -119,6 +120,78 @@
         <p class="muted hint" id="notif-status"></p>
         <p class="muted hint">Notifications are text only: never photos, never locations. Reminders come from Base Camp, so your
           laptop needs to be on with Base Camp running. If Base Camp's link changes, open the new link and turn them on again.</p>
+      </div>
+    </section>
+
+    <!-- Guide: how to use + rules -->
+    <section id="v-guide" class="view guide" hidden>
+      <div class="card lace">
+        <p class="eyebrow">A little guide</p>
+        <h2>How Walk Journal works</h2>
+        <p class="gentle">A quest for the walk you were going to take anyway. The screen is the shortest part.</p>
+        <ol>
+          <li><b>Pick a walk.</b> “Find me a walk” suggests real places near you. “Walk from here” starts right where you are, no destination needed.</li>
+          <li><b>Choose distance and difficulty.</b> Easy has 3 things to find (about 20 min), Medium 5 (about 45 min), Hard 7 (about 90 min, with a rare find and a step goal).</li>
+          <li><b>Start, then put your phone away.</b> Tap “Read it to me” if you’d like to hear the quest.</li>
+          <li><b>Take a photo for each find.</b> Use “Take photo”. The time and place are saved the moment you tap the shutter, even with no signal.</li>
+          <li><b>Finish and write a line or two.</b> Your walk becomes a page in your diary and a pin on your map.</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>The rules</h2>
+        <h3>When a walk is complete</h3>
+        <p>About three quarters of the finds, rounded to the nearest one: <b>2 of 3</b>, <b>3 of 4</b>, <b>4 of 5</b>, <b>5 of 7</b>.
+          Less than that is a <b>partial walk</b>. It still goes in your diary and on your map, just without points or badges.</p>
+
+        <h3>How a photo is checked</h3>
+        <table class="rule-table">
+          <tr><td>Right place</td><td>Taken near the place (about 400 m; bigger parks get more room). On “Walk from here”, anywhere within your distance: 1 mi, 5 mi or 20 mi.</td></tr>
+          <tr><td>Right time</td><td>Taken after you start and before the quest ends. Quests always end before sunset.</td></tr>
+          <tr><td>Right thing</td><td>Gemma looks at the photo, on the laptop, never on a server.</td></tr>
+        </table>
+
+        <h3>What the marks mean</h3>
+        <table class="rule-table">
+          <tr><td><span class="icon-key">✓</span>verified</td><td>All three checks passed.</td></tr>
+          <tr><td><span class="icon-key">✓</span>verified (gallery)</td><td>A gallery photo whose time and place checked out.</td></tr>
+          <tr><td><span class="icon-key">◐</span>not confirmed</td><td>Gemma saw the right thing, but the time or place couldn’t be confirmed (screenshots, some gallery photos, or location turned off). It still counts.</td></tr>
+          <tr><td><span class="icon-key">?</span>couldn’t tell</td><td>Retake it, or tap “It’s right” to confirm it yourself (✋).</td></tr>
+          <tr><td><span class="icon-key">✗</span>not yet</td><td>Wrong place, wrong time, or not quite the thing. Try again.</td></tr>
+        </table>
+
+        <h3>Gallery photos</h3>
+        <p>A gallery photo counts as verified when it was taken during your quest (or in the last 15 minutes) and you’re still near the place when you upload it. If the photo has no time saved, it’s marked ◐. For a full ✓, use “Take photo”.</p>
+
+        <h3>Swaps and skips</h3>
+        <p>Not every find exists everywhere. Swap a task for a new one: <b>2 swaps</b> on Easy, <b>3</b> on Medium and Hard. Hard quests also get one skip for the rare find. Swapping never costs points.</p>
+
+        <h3>Walk from here</h3>
+        <p>On Medium and Hard, take at least one photo <b>300 m</b> or more from where you started, so the walk is really a walk.</p>
+
+        <h3>Points</h3>
+        <table class="rule-table">
+          <tr><td>10</td><td>for each verified find</td></tr>
+          <tr><td>+20</td><td>for a verified rare find</td></tr>
+          <tr><td>5</td><td>for a find you confirmed yourself or one marked ◐</td></tr>
+        </table>
+
+        <h3>Your weekly goal</h3>
+        <p class="gentle">Walking every day is lovely, but never required.</p>
+        <p>Pick 1 to 7 walks a week in Settings (3 to start). Reach it for <b>Week Well Walked</b>, four weeks in a row for <b>Four Good Weeks</b>. Nothing ever “breaks”, and a week in progress never counts against you.</p>
+      </div>
+
+      <div class="card">
+        <h2>Walk kindly</h2>
+        <ul>
+          <li>Stay on paths. No climbing, no wading into water.</li>
+          <li>Look, don’t touch: never pick flowers or touch or feed wildlife.</li>
+          <li>Quests end before dark, unless it’s a night walk with night tasks.</li>
+        </ul>
+        <div class="seal-note">
+          <span class="seal">your data</span>
+          <p>Your photos, notes, mood and exact location stay on the laptop running Base Camp. Only place searches, the quest text (to read it aloud), and skies you choose to share ever leave it.</p>
+        </div>
       </div>
     </section>
 
@@ -212,6 +285,7 @@
     <a href="#home">Walk</a>
     <a href="#map">Map</a>
     <a href="#journal">Journal</a>
+    <a href="#guide">Guide</a>
     <a href="#settings">Settings</a>
   </nav>
 

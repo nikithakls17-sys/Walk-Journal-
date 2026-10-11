@@ -56,7 +56,7 @@ function show(name, msg) {
   $$(".view").forEach((v) => (v.hidden = v.id !== `v-${name}`));
   document.body.dataset.view = name;
   const tab = { home: "home", suggest: "home", intro: "home", summary: "home", finish: "home", map: "map", journal: "journal",
-    settings: "settings" }[name];
+    settings: "settings", guide: "guide" }[name];
   $$(".tabs a").forEach((a) => a.classList.toggle("on", a.getAttribute("href") === `#${tab}`));
   if (name === "loading") $("#loading-msg").textContent = msg || "Thinking about your walk…";
   views[name]?.();

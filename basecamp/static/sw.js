@@ -1,11 +1,12 @@
 // Walk Journal service worker: the app shell works with no signal at the park.
-const SHELL = "wj-shell-v9";
+const SHELL = "wj-shell-v10";
 const RUNTIME = "wj-runtime-v1";
 const SHELL_FILES = [
   "/", "/index.html", "/app.js", "/queue.js", "/style.css", "/manifest.json",
   "/icons/icon-192.png", "/icons/icon-512.png", "/fonts/nunito-latin-wght-normal.woff2",
-  "/fonts/pixelify-sans-latin-400-normal.woff2", "/fonts/pixelify-sans-latin-600-normal.woff2",
-  "/fonts/cormorant-garamond-latin-600-italic.woff2",
+  "/fonts/playfair-display-latin-700-italic.woff2", "/fonts/playfair-display-latin-800-italic.woff2",
+  "/fonts/cormorant-garamond-latin-600-italic.woff2", "/fonts/cormorant-garamond-latin-600-normal.woff2",
+  "/fonts/cormorant-garamond-latin-700-normal.woff2",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js",
 ];
