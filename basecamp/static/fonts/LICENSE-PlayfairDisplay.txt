@@ -1,2 +1,0 @@
-Playfair Display (playfair-display-latin-*-italic.woff2) by Claus Eggers Sorensen.
-Licensed under the SIL Open Font License 1.1: https://openfontlicense.org

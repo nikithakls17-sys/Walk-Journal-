@@ -54,3 +54,4 @@ One line per thing that broke or surprised us: what happened → why → fix.
 | Oct 12 | Buttons felt plain | Flat pills | Ribbon-tag buttons with a stitched inner ring, serif labels, a leaf on the main button; distance/difficulty as stitched paper tags. Still no animation beyond the existing press |
 | Oct 12 | Buttons looked grey in dusk mode | The white "shine" gradient was tuned for light paper | A `--shine` color per theme (5% white in dusk) |
 | Oct 12 | Testers asked how the rules work | Rules lived only in the README | New Guide tab: how to use, completion rule, photo checks, marks, gallery photos, swaps, points, weekly goal, walking kindly, and privacy |
+| Oct 12 | Storybook restyle reverted | The user preferred the earlier pixel-heading diary | `git revert` of the style commit (history kept). Kept the Guide tab, restyled to match. Diary pages now stay cream in dusk mode, like the pages of a book, with a soft shadow along the spine |

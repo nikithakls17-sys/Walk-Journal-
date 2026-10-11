@@ -37,7 +37,7 @@ The **Guide** tab explains how to use Walk Journal and every rule in plain words
 
 ### The journal
 
-Each walk is a page in a diary: soft cream paper with faint ruled lines, the walk title in a whimsical italic serif, the date in small classic-serif capitals, the season as a little wax seal, your mood as a tiny hand-drawn icon, and your note in a diary italic with a red drop cap. Photos sit on the page as polaroid prints held with washi tape. Partial walks get a gentle "partial walk" stamp. Now and then a sleepy sun, a snail or a sprout hides in a corner. It's all CSS and inline SVG: no image files, no animation, and it works in dusk mode.
+Each walk is a page in a diary: soft cream paper with faint ruled lines (cream in dusk mode too, like a book page), the date and walk title in a small pixel font, the season as a little wax seal, your mood as a tiny hand-drawn icon, and your note in a diary hand. Photos sit on the page as polaroid prints held with washi tape. Partial walks get a gentle "partial walk" stamp. Now and then a sleepy sun, a snail or a sprout hides in a corner. It's all CSS and inline SVG: no image files, no animation, and it works in dusk mode.
 
 ### Gentle by design
 
@@ -214,4 +214,4 @@ None so far. Any commit made after Oct 11, 11:59 PM PDT will be listed here.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The Nunito, Playfair Display and Cormorant Garamond fonts are under the SIL Open Font License (`basecamp/static/fonts/LICENSE-*.txt`). Map data © OpenStreetMap contributors.
+MIT, see [LICENSE](LICENSE). The Nunito, Pixelify Sans and Cormorant Garamond fonts are under the SIL Open Font License (`basecamp/static/fonts/LICENSE-*.txt`). Map data © OpenStreetMap contributors.
