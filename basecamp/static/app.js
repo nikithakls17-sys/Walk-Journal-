@@ -75,6 +75,8 @@ window.addEventListener("hashchange", route);
 // ---------- geolocation ----------
 
 let lastFix = null;
+let lastGeoError = null; // 1 = permission denied, "unsupported" = no GPS API, other = timeout/unavailable
+const locationDenied = () => lastGeoError === 1 || lastGeoError === "unsupported";
 let watchId = null;
 function watchGps() {
   if (watchId !== null || !navigator.geolocation) return;
@@ -94,10 +96,10 @@ function getFix(maxAgeMs = 15000, { fresh = false } = {}) {
   const recent = (f) => f && Date.now() - f.at < maxAgeMs;
   if (!fresh && recent(lastFix)) return Promise.resolve(lastFix);
   return new Promise((resolve) => {
-    if (!navigator.geolocation) return resolve(null);
+    if (!navigator.geolocation) { lastGeoError = "unsupported"; return resolve(null); }
     navigator.geolocation.getCurrentPosition(
-      (p) => resolve((lastFix = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, at: Date.now() })),
-      () => resolve(!fresh && recent(lastFix) ? lastFix : null),
+      (p) => { lastGeoError = null; resolve((lastFix = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, at: Date.now() })); },
+      (err) => { lastGeoError = err?.code ?? "error"; resolve(!fresh && recent(lastFix) ? lastFix : null); },
       { enableHighAccuracy: true, maximumAge: fresh ? 0 : maxAgeMs, timeout: fresh ? 20000 : 10000 },
     );
   });
@@ -139,7 +141,7 @@ async function saveHome(lat, lng, city) {
 
 // Settings live on the phone (works offline) and on Base Camp (survives reinstalling the app).
 async function saveSettings(changes) {
-  const s = { auto_read: false, ...store.get("settings", {}), ...changes };
+  const s = { auto_read: false, weekly_goal: 3, ...store.get("settings", {}), ...changes };
   store.set("settings", s);
   try { await api("/api/settings", { json: s }); } catch {}
   return s;
@@ -165,15 +167,44 @@ $("#resume-btn").onclick = () => resumeQuest();
 
 const choice = (name) => document.querySelector(`input[name=${name}]:checked`).value;
 
-$("#walk-here").onclick = async () => {
+// Writing a quest takes about a minute on Base Camp. Extra taps used to queue more quests behind it,
+// so while one is being written every quest button is ignored (also across a page reload, for 2 minutes).
+const WRITING_KEY = "writingSince";
+let writing = false;
+function isWriting() {
+  if (writing) return true;
+  try { return Date.now() - (+sessionStorage.getItem(WRITING_KEY) || 0) < 120000; } catch { return false; }
+}
+async function oneAtATime(fn) {
+  if (isWriting()) return toast("Still writing your quest, about 1 minute.");
+  writing = true;
+  try { sessionStorage.setItem(WRITING_KEY, Date.now()); } catch {}
+  document.body.classList.add("writing");
+  try { await fn(); } finally {
+    writing = false;
+    try { sessionStorage.removeItem(WRITING_KEY); } catch {}
+    document.body.classList.remove("writing");
+  }
+}
+
+// No location (permission denied): everyday tasks only, photos say "place not confirmed".
+// The saved home only sets the season; it's never used to check photos.
+function noLocationQuest() {
+  const s = store.get("settings", {});
+  toast("Location is off, so this walk uses everyday tasks and photos will say “place not confirmed”.", 7000);
+  return makeQuestNow({ mode: "no_location", lat: s.home_lat ?? null, lng: s.home_lng ?? null });
+}
+
+$("#walk-here").onclick = () => oneAtATime(async () => {
   show("loading", "Getting a fresh GPS fix for your start…");
   const fix = await getFix(0, { fresh: true });
   if (!fix) {
+    if (locationDenied()) return noLocationQuest();
     toast("Couldn't get a fresh GPS fix. Walk from here starts exactly where you are, so check location is on and try again.", 7000);
     return show("home");
   }
-  await makeQuest({ mode: "from_here", lat: fix.lat, lng: fix.lng });
-};
+  await makeQuestNow({ mode: "from_here", lat: fix.lat, lng: fix.lng });
+});
 
 // ---------- update my location ----------
 // The saved home (from setup) is used for the Home walks pin, the map's starting view, and as a backup
@@ -203,8 +234,12 @@ function showHomeLine() {
 }
 $$(".update-location").forEach((b) => (b.onclick = () => updateMyLocation(b)));
 
-async function makeQuest(target) {
-  show("loading", "Gemma is writing your quest…");
+function makeQuest(target) {
+  return oneAtATime(() => makeQuestNow(target));
+}
+
+async function makeQuestNow(target) {
+  show("loading", "Writing your quest, about 1 minute");
   const where = typeof target === "string" ? { mode: "place", place_id: target } : target;
   try {
     const q = await api("/api/quests", { json: { ...where, distance_tier: choice("tier"), difficulty: choice("diff"), tz: TZ } });
@@ -220,10 +255,12 @@ async function makeQuest(target) {
 // ---------- walk suggestions ----------
 
 let suggestions = null;
-$("#find-walk").onclick = async () => {
-  show("loading", "Looking for real walks near you…");
+$("#find-walk").onclick = () => oneAtATime(async () => {
+  show("loading", "Finding walks near you, about 1 minute");
   const s = store.get("settings");
-  const fix = (await getFix(60000)) || { lat: s.home_lat, lng: s.home_lng };
+  let fix = await getFix(60000);
+  if (!fix && locationDenied()) return noLocationQuest();
+  fix = fix || { lat: s.home_lat, lng: s.home_lng };
   const qs = new URLSearchParams({ lat: fix.lat, lng: fix.lng, tier: choice("tier"), difficulty: choice("diff"), tz: TZ });
   try {
     suggestions = { ...(await api(`/api/places/suggest?${qs}`)), from: fix };
@@ -236,7 +273,7 @@ $("#find-walk").onclick = async () => {
     toast(e.message, 6000);
     show("home");
   }
-};
+});
 
 const PIN = (cls) => L.divIcon({ className: `pin ${cls}`, html: "<span></span>", iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -26] });
 const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -296,7 +333,7 @@ views.map = async () => {
     data.visited.forEach((p) => {
       pts.push([p.lat, p.lng]);
       const icon = L.divIcon({ className: `pin solid${p.id === "home-walks" ? " home" : ""}`, html: `<span>${p.visits.length}</span>`, iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] });
-      const visits = p.visits.map((v) => `<div class="visit"><b>${new Date(v.date * 1000).toLocaleDateString()}</b> ${esc(v.title)}
+      const visits = p.visits.map((v) => `<div class="visit"><b>${new Date(v.date * 1000).toLocaleDateString()}</b> ${esc(v.title)}${v.partial ? " <small>(partial walk)</small>" : ""}
         <div class="thumbs">${v.photos.map((u) => `<img src="${u}" alt="">`).join("")}</div></div>`).join("");
       L.marker([p.lat, p.lng], { icon }).addTo(m._layer).bindPopup(`<b>${esc(p.name)}</b> · ${p.visits.length} visit${p.visits.length > 1 ? "s" : ""}${visits}`, { maxWidth: 260 });
     });
@@ -476,14 +513,24 @@ function swapsLine() {
   return `<li class="swaps muted">🔄 Swaps left: ${quest.swaps_left}</li>`;
 }
 
+function progressLine() {
+  const p = quest.progress;
+  if (!p || !p.total) return "";
+  const msg = p.done >= p.needed ? `${p.done} of ${p.total} done · walk complete 🌿` : `${p.done} of ${p.total} done · ${p.needed} completes the walk`;
+  return `<li class="swaps muted">✓ ${msg}</li>`;
+}
+
 function renderTasks() {
-  $("#task-list").innerHTML = swapsLine() + awayRequirement() + quest.tasks.map((t) => {
+  $("#task-list").innerHTML = progressLine() + swapsLine() + awayRequirement() + quest.tasks.map((t) => {
     const st = t.local_status || t.status;
+    const label = (!t.local_status && t.capture?.label) || STATUS_TEXT[st];
     const reason = t.capture?.reason && st !== "pass" ? `<small>${esc(t.capture.reason)}</small>` : "";
     const done = ["pass", "self", "skipped"].includes(st);
     const actions = [];
     if (!done && st !== "queued") {
       if (t.kind === "tracker") actions.push(`<button class="btn small" data-act="tracker" data-id="${t.id}">Add screenshot</button>`);
+      else if (st === "unconfirmed") // already ◐: another gallery pick can't do better, a live photo can
+        actions.push(`<button class="btn small" data-act="snap" data-id="${t.id}">Take photo for a full ✓</button>`);
       else actions.push(`<button class="btn small" data-act="snap" data-id="${t.id}">Take photo</button>`,
         `<button class="btn small ghost" data-act="gallery" data-id="${t.id}">Choose from gallery</button>`);
       if (st === "unsure" && t.capture) actions.push(`<button class="btn small ghost" data-act="self" data-cid="${t.capture.id}">It's right</button>`);
@@ -492,9 +539,9 @@ function renderTasks() {
         actions.push(`<button class="btn small ghost" data-act="swap" data-id="${t.id}">Swap this task</button>`);
     }
     return `<li class="task s-${st}">
-      <span class="ico" title="${STATUS_TEXT[st]}">${STATUS_ICON[st] || "○"}</span>
+      <span class="ico" title="${esc(label)}">${STATUS_ICON[st] || "○"}</span>
       <div class="body"><span>${esc(t.prompt)}${t.rare ? ' <span class="tag">rare</span>' : ""}</span>${reason}
-        ${STATUS_TEXT[st] ? `<em>${STATUS_TEXT[st]}</em>` : ""}</div>
+        ${label ? `<em>${esc(label)}</em>` : ""}</div>
       <div class="acts">${actions.join("")}</div></li>`;
   }).join("");
 }
@@ -597,11 +644,14 @@ function pickGallery(id) {
   $("#gallery-input").value = "";
   $("#gallery-input").click();
 }
-$("#gallery-input").onchange = (e) => {
+$("#gallery-input").onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  const task = quest.tasks.find((t) => t.id === galleryTaskId);
+  if ((task.local_status || task.status) === "unconfirmed") return openCamera(task);
+  const fix = quest.mode === "no_location" ? null : await getFix(15000);
   // Sent with its EXIF intact; Base Camp reads the time + GPS, then strips them before saving.
-  submitCapture({ task: quest.tasks.find((t) => t.id === galleryTaskId), blob: file, takenAt: Date.now(), fix: null, source: "gallery" });
+  submitCapture({ task, blob: file, takenAt: Date.now(), fix, source: "gallery" });
 };
 
 let trackerTaskId = null;
@@ -659,7 +709,8 @@ async function sync() {
       setLocalStatus(job.taskId, null);
       if (err) toast(`A photo couldn't be saved: ${err.message}`);
       else if (document.visibilityState === "visible")
-        toast(res.status === "pass" ? `✓ ${res.reason || "Verified!"}` : res.reason || STATUS_TEXT[res.status]);
+        toast(res.status === "pass" ? `✓ ${res.label === "verified (gallery)" ? "Verified (gallery). " : ""}${res.reason || "Verified!"}`
+          : res.reason || STATUS_TEXT[res.status], res.status === "unconfirmed" ? 8000 : 3500);
     }
     if (job.kind === "finish" && res) {
       saveQuest(res);
@@ -700,6 +751,21 @@ function setLocalStatus(taskId, st) {
 // ---------- finish ----------
 
 $("#finish-btn").onclick = () => show("finish");
+views.finish = () => {
+  const p = quest.progress;
+  $("#finish-partial").textContent = p && !p.completed && p.total
+    ? `You've done ${p.done} of ${p.total}. Saving now keeps your photos and notes as a partial walk in your journal and on your map. A walk completes at ${p.needed} of ${p.total}, whenever you're ready.`
+    : "";
+};
+
+// Gentle: progress toward a weekly goal the walker picks. Never a broken streak, never guilt.
+function weekLine(w) {
+  if (!w) return "";
+  const row = w.weeks_in_a_row >= 2 ? ` ${w.weeks_in_a_row} good weeks in a row.` : "";
+  if (w.met) return `🌿 Weekly goal reached: ${w.this_week} of ${w.goal} walks this week. Lovely.${row}`;
+  if (w.this_week) return `🌿 ${w.this_week} of ${w.goal} walks this week.${row}`;
+  return `🌿 Your week, your pace. Goal: ${w.goal} walks.`;
+}
 $("#finish-save").onclick = async () => {
   const screenSeconds = screenTime.seconds();
   quest.local.done = true;
@@ -730,10 +796,14 @@ views.summary = () => {
   const outside = q.outside_seconds ?? (q.finished_at - q.started_at);
   $("#sum-title").textContent = q.title;
   $("#sum-screen").innerHTML = `<b>${Math.round(q.screen_seconds || 0)} seconds</b> on screen.<br><b>${fmtDuration(outside)}</b> outside.`;
-  $("#sum-points").textContent = q.points == null ? "Saved on your phone. Points and badges appear when it syncs."
-    : `${q.points} points${q.streak ? ` · 🔥 ${q.streak}-day streak` : ""}`;
-  if (q.mode === "from_here" && q.requirement_met === 0)
-    $("#sum-points").textContent = `You didn't get ${q.away_goal_m} m from your start (farthest photo: ${q.farthest_m} m), so this walk is in your journal but doesn't earn points, badges or a streak day.`;
+  const p = q.progress;
+  let line;
+  if (q.points == null) line = "Saved on your phone. Points and badges appear when it syncs.";
+  else if (q.partial) {
+    const far = q.mode === "from_here" && !q.away_met ? ` (and one photo ${q.away_goal_m} m from your start)` : "";
+    line = `Partial walk saved to your journal and map 🌿 ${p ? `${p.done} of ${p.total} done; ${p.needed} completes a walk${far}.` : ""} No points this time, and that's okay.`;
+  } else line = `${q.points} points`;
+  $("#sum-points").textContent = [line, weekLine(q.week)].filter(Boolean).join(" · ");
   $("#sum-badges").innerHTML = (q.new_badges || []).map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("");
   const skies = q.tasks.filter((t) => t.category === "sky" && ["pass", "self"].includes(t.status) && t.capture);
   $("#sum-share").innerHTML = skies.length && online ? `<div class="share">
@@ -770,8 +840,7 @@ views.journal = async () => {
     ({ data, badges } = store.get("journalCache", {}));
   }
   if (!data) return ($("#j-entries").innerHTML = `<p class="muted">Your journal lives on Base Camp. Open it when you're back online.</p>`);
-  const s = data.streak;
-  $("#j-streak").textContent = s ? `🔥 ${s}-day streak` : "Start a streak today.";
+  $("#j-streak").textContent = weekLine(data.week);
   $("#j-badges").innerHTML = badges.badges.map((b) => `<div class="badge ${b.earned_at ? "" : "locked"}" title="${esc(b.how)}">
     <span>${b.icon}</span>${esc(b.name)}</div>`).join("");
   if (!data.entries.length) return ($("#j-entries").innerHTML = `<p class="muted center">No walks yet. Your first page is waiting outside.</p>`);
@@ -780,12 +849,12 @@ views.journal = async () => {
     const photos = q.tasks.filter((t) => t.capture?.photo_url && t.kind === "photo");
     return `<article class="card note entry">
       <p class="eyebrow">${new Date(q.finished_at * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${esc(q.place?.name || "")}</p>
-      <h3>${esc(q.title)}</h3>
+      <h3>${esc(q.title)}${q.partial ? ' <span class="tag soft">partial walk</span>' : ""}</h3>
       <p class="muted">${verified}/${q.tasks.length} verified · ${fmtDuration(q.outside_seconds)} outside · ${Math.round(q.screen_seconds || 0)} s on screen${q.mood ? ` · ${esc(q.mood)}` : ""}</p>
-      ${q.mode === "from_here" && q.requirement_met === 0 ? `<p class="muted"><small>Didn't reach ${q.away_goal_m} m from the start, so no points or badges.</small></p>` : ""}
+
       ${q.note ? `<blockquote>${esc(q.note)}</blockquote>` : ""}
       <div class="thumbs big">${photos.map((t) => `<figure><img src="${t.capture.photo_url}" alt="${esc(t.prompt)}" loading="lazy">
-        <figcaption>${STATUS_ICON[t.status]} ${esc(t.prompt)}</figcaption></figure>`).join("")}</div>
+        <figcaption>${STATUS_ICON[t.status]} ${esc(t.prompt)}${t.capture?.label && t.status !== "pass" ? ` (${esc(t.capture.label)})` : ""}</figcaption></figure>`).join("")}</div>
       ${q.badges.length ? `<div class="badges">${q.badges.map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("")}</div>` : ""}
     </article>`;
   }).join("");
@@ -808,9 +877,11 @@ views.settings = () => {
   $("#n-journal").checked = !!s.notify_journal;
   $("#n-journal-time").value = s.journal_time || "20:00";
   $("#n-quest").checked = !!s.notify_quest;
+  $("#weekly-goal").value = String(s.weekly_goal || 3);
   $("#notif-status").textContent = notifSupport().message;
 };
 $("#auto-read").onchange = (e) => saveSettings({ auto_read: e.target.checked });
+$("#weekly-goal").onchange = (e) => saveSettings({ weekly_goal: +e.target.value });
 
 function notifSupport() {
   if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window))

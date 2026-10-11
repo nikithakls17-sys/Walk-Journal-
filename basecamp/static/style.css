@@ -153,6 +153,10 @@ input:not([type=radio]), textarea { width: 100%; font: inherit; font-weight: 400
 .task .body small, .task .body em { font-size: .85rem; color: var(--muted); }
 .task img { max-width: 100%; border-radius: 12px; margin-top: 8px; }
 .task { flex-wrap: wrap; }
+.tag.soft { background: var(--soft); color: var(--text); font-weight: 700; }
+.goal-row { margin-left: 0; }
+.goal-row select { font: inherit; padding: 8px 10px; border-radius: 12px; border: 2px solid var(--soft); background: var(--bg); color: var(--text); }
+body.writing #walk-here, body.writing #find-walk, body.writing [data-go] { opacity: .5; pointer-events: none; }
 .tasks .swaps { padding: 4px 0 8px; font-size: .9rem; font-weight: 700; border-bottom: 1px dashed var(--soft); }
 .task .acts { display: flex; flex-wrap: wrap; gap: 8px; flex-basis: 100%; padding-left: 46px; }
 .task .acts:empty { display: none; }

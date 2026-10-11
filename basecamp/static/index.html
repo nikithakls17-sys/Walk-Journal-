@@ -94,6 +94,13 @@
         <p class="muted home-line"></p>
         <button class="btn ghost update-location">📍 Update my location</button>
         <p class="muted hint">Uses your current GPS. "Walk from here" always uses fresh GPS on its own.</p>
+        <h3>Weekly goal</h3>
+        <label class="time-row goal-row">I'd like to walk
+          <select id="weekly-goal">
+            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            <option value="5">5</option><option value="6">6</option><option value="7">7</option>
+          </select> times a week</label>
+        <p class="muted hint">Walking every day is lovely, but never required. Only walks you complete (75% of tasks) count.</p>
         <h3>Voice</h3>
         <label class="toggle"><input type="checkbox" id="auto-read"><span>Read quests aloud as soon as I start</span></label>
         <p class="muted hint">Off by default. You can always tap “Read it to me” on the quest screen.</p>
@@ -163,6 +170,7 @@
           <label><input type="radio" name="mood" value="energized"><span>⚡ energized</span></label>
           <label><input type="radio" name="mood" value="tired"><span>😴 tired</span></label>
         </fieldset>
+        <p class="muted hint" id="finish-partial"></p>
         <button id="finish-save" class="btn big primary">Save to my journal</button>
       </div>
     </section>
