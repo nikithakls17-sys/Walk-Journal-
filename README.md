@@ -16,7 +16,7 @@ Walk Journal finds real walks near you, writes a seasonal, place-specific photo 
 4. Tap **Read it to me** and **ElevenLabs reads it aloud**, or turn on "Read quests aloud as soon as I start" (off by default). The screen says *"Phone away. Go outside."* and nothing else.
 5. Your phone comes out only to snap a task. **Take photo** records live GPS and time inside the app. **Choose from gallery** uses the time and GPS saved in the photo itself.
 6. Base Camp checks the proof: **right place** (GPS radius), **right time** (quest window), **right thing** (Gemma vision).
-7. Finish with a journal note and mood. You get badges, your streak, and your screen time: *"92 seconds on screen. 48 minutes outside."*
+7. Finish with a journal note and mood. You get badges, progress toward your weekly goal, and your screen time: *"92 seconds on screen. 48 minutes outside."*
 
 ### Swap this task
 
@@ -28,8 +28,24 @@ No destination needed. **Walk from here** turns a normal walk around your home i
 
 - Your current location becomes the start point. Gemma writes **seasonal and time-of-day tasks only**. Tasks that mention a park, trail, lake or landmark are dropped by code.
 - A photo passes the place check if it's within your chosen distance of the start: Nearby = 1 mi, Walk-Run = 5 mi, Adventure = 20 mi.
-- **Medium and Hard need one verified photo at least 300 m from the start**, so you actually walk. The phone shows how far you are from the start. A walk that never gets that far is saved in your journal but earns no points, badges or streak day.
+- **Medium and Hard need one verified photo at least 300 m from the start**, so you actually walk. The phone shows how far you are from the start. A walk that never gets that far is saved as a partial walk: in your journal and on your map, without points or badges.
 - Every walk from here adds to one **Home walks** pin on your map, with a visit count.
+
+### Gentle by design
+
+Walking every day is encouraged, never required.
+
+- **A walk completes at 75% of its tasks** (rounded up: 3 of 4, 4 of 5, 6 of 7). Below that, you can still save your photos and a journal note as a **partial walk**. It shows in the journal and on the map, but earns no points or completion badges.
+- **A weekly goal instead of daily streaks.** Pick 1 to 7 walks a week in Settings (default 3). Badges: **Week Well Walked** (reach your goal) and **Four Good Weeks** (four weeks in a row). A week in progress never counts against you, and there's no "streak broken" anywhere.
+- **Reminders are kind and easy to ignore:** "Nice day for a short walk?"
+
+### Seasons where you are
+
+Seasons come from each walker's own location. Between latitudes -23.5 and 23.5, local seasons replace fall/winter/spring/summer: **summer (Mar-May), monsoon (Jun-Sep), post-monsoon (Oct-Nov) and winter (Dec-Feb)** north of the equator, wet/dry south of it. Gemma gets tropical ideas like hibiscus, bougainvillea, neem leaves, a coconut tree, crows or mynas, puddles after rain, and a bright warm sky.
+
+### No location? Still a walk
+
+If you turn location off, Walk Journal gives only everyday tasks that exist almost anywhere (the sky, grass, a road or path, a tree, your shoes on the ground, a plant). The place check is skipped, Gemma still checks each photo, and photos are marked **"place not confirmed"**.
 
 ### Notifications
 
@@ -128,7 +144,7 @@ Without `MONGODB_URI` the gallery falls back to SQLite. That works locally, but 
 |---|---|---|
 | Right place | GPS at the shutter must be within the place radius (400 m default, 1500 m for big parks), plus GPS accuracy as tolerance (capped at 150 m) | Code |
 | Right time | Capture time must fall between quest start and deadline | Code |
-| Gallery photos | Base Camp reads the photo's EXIF time and GPS **before** stripping it. If both are there, the photo gets the same place and time checks as a camera photo and can be fully verified. Where the phone is *now* is never used for a gallery photo | Code |
+| Gallery photos | Base Camp reads the photo's EXIF time and GPS **before** stripping it. Time: the EXIF time must be inside the quest window or within the last 15 minutes. Place: the photo's own GPS, or if it has none, the phone's live GPS at upload. Both pass = **"verified (gallery)"**. No EXIF time = "time/place not confirmed" (screenshots have none, and some phones remove it), with a nudge to use Take photo | Code |
 | Photo quality | Too dark, washed out, or blurry → ask for a retake instead of guessing (blur check skipped for sky and water) | Code (Pillow) |
 | Right thing | Gemma vision gets the photo + the task's `verify` text → `{match, confidence, what_i_see, reason}`. Passes at confidence ≥ 0.6 | Gemma |
 | Tracker goal | Gemma reads the watch/band screenshot → `{date, distance_mi, steps, duration_min}`. Code checks the date is today and the distance meets the goal | Gemma + code |
@@ -144,7 +160,7 @@ A gallery photo with no EXIF time or GPS still gets Gemma's content check. If it
 - Screen time measures time in Walk Journal only, not your whole phone.
 - Reminders come from Base Camp, so the laptop has to be on and running Base Camp at reminder time.
 - The free Cloudflare quick tunnel gets a new URL each run. Notifications belong to the URL they were turned on from, so after a restart, open the new link and turn them on again (a named Cloudflare tunnel gives a stable URL).
-- Some phones and browsers remove location data when you pick a photo for a web page. Those photos show up honestly as "time/place not confirmed".
+- Some phones and browsers remove location data when you pick a photo for a web page, and screenshots have none. Those photos show up honestly as "time/place not confirmed". Those photos show up honestly as "time/place not confirmed".
 - Offline captures are verified when you're back online. Time and place were recorded at the shutter, so the check is still valid later.
 
 ## Evaluation
@@ -158,7 +174,7 @@ python -m eval.run_eval
 
 ## Badges
 
-First Grass · Leaf Peeper · Cloud Spotter · Rare Find · Explorer · Regular · Golden Hour · Screen Light (< 60 s on screen) · 3-Day Streak · 7-Day Streak. All are awarded by code, from verified tasks only.
+First Grass · Leaf Peeper · Cloud Spotter · Rare Find · Explorer · Regular · Golden Hour · Screen Light (< 60 s on screen) · Week Well Walked · Four Good Weeks. All are awarded by code. Only completed walks (75%+) count, and task badges need Gemma-verified tasks.
 
 ## Prize categories
 
@@ -175,7 +191,7 @@ First Grass · Leaf Peeper · Cloud Spotter · Rare Find · Explorer · Regular 
 
 ```bash
 pip install pytest
-python -m pytest tests     # 78 tests: core loop, rules, task swaps, walk from here, gallery photos + EXIF, notifications, places, journal, sky gallery, tracing, eval
+python -m pytest tests     # 102 tests: core loop, rules, task swaps, walk from here, gallery photos + EXIF, notifications, places, journal, sky gallery, tracing, eval
 ```
 
 `BUILD_LOG.md` is the bug diary: what broke, why, and the fix.
