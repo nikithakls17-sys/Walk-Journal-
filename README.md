@@ -18,6 +18,15 @@ Walk Journal finds real walks near you, writes a seasonal, place-specific photo 
 6. Base Camp checks the proof: **right place** (GPS radius), **right time** (quest window), **right thing** (Gemma vision).
 7. Finish with a journal note and mood. You get badges, your streak, and your screen time: *"92 seconds on screen. 48 minutes outside."*
 
+### Walk from here
+
+No destination needed. **Walk from here** turns a normal walk around your home into a quest:
+
+- Your current location becomes the start point. Gemma writes **seasonal and time-of-day tasks only**. Tasks that mention a park, trail, lake or landmark are dropped by code.
+- A photo passes the place check if it's within your chosen distance of the start: Nearby = 1 mi, Walk-Run = 5 mi, Adventure = 20 mi.
+- **Medium and Hard need one verified photo at least 300 m from the start**, so you actually walk. The phone shows how far you are from the start. A walk that never gets that far is saved in your journal but earns no points, badges or streak day.
+- Every walk from here adds to one **Home walks** pin on your map, with a visit count.
+
 The app measures its own screen time with the Page Visibility API. Target: under 2 minutes per quest.
 
 ## Architecture
@@ -68,7 +77,7 @@ Scan the QR code with your phone. "Add to Home Screen" installs it as an app.
 
 | Key | What it unlocks | Without it |
 |---|---|---|
-| `SERPAPI_KEY` | Real nearby parks and trails | Use **Quest right where I am** |
+| `SERPAPI_KEY` | Real nearby parks and trails | Use **Walk from here** |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Natural quest voice | The browser's built-in speech |
 | `SENTRY_DSN` | `gen_ai` traces of every Gemma call | No tracing |
 | `GALLERY_URL`, `GALLERY_TOKEN` | Sharing skies to the public gallery | Share button stays hidden |
@@ -143,7 +152,7 @@ First Grass · Leaf Peeper · Cloud Spotter · Rare Find · Explorer · Regular 
 
 ```bash
 pip install pytest
-python -m pytest tests     # 25 tests: core loop, rules, places, journal, gallery, tracing, eval
+python -m pytest tests     # 35 tests: core loop, rules, walk from here, places, journal, gallery, tracing, eval
 ```
 
 `BUILD_LOG.md` is the bug diary: what broke, why, and the fix.
