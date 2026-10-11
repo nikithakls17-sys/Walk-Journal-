@@ -63,9 +63,13 @@ def test_gallery_photo_with_exif_in_window_and_place_is_fully_verified(monkeypat
     q = new_quest()
     cap = pick(q, "t1", gallery_jpeg(time.time() - 30, LAT, LNG))
     assert cap["status"] == "pass" and cap["proof"] == "exif" and cap["place_ok"] == 1 and cap["time_ok"] == 1
+    assert cap["label"] == "verified (gallery)"
+    from tests.test_core import upload
+    upload(q, "t2")
+    upload(q, "t3")
     done = client.post(f"/api/quests/{q['id']}/finish", json={"screen_seconds": 30}).json()
-    assert done["points"] == 10
-    assert any(qq["id"] == q["id"] for qq, _, _ in badges._verified())
+    assert done["completed"] and done["points"] == 30
+    assert any(qq["id"] == q["id"] and t["id"] == "t1" for qq, t, _ in badges._verified())
 
 
 def test_gallery_photo_taken_before_quest_fails_time(monkeypatch):
@@ -89,12 +93,17 @@ def test_gallery_photo_without_exif_is_unconfirmed_and_never_counts_for_badges(m
     cap = pick(q, "t1", gallery_jpeg(), phone_lat=LAT)
     assert cap["status"] == "unconfirmed" and cap["proof"] == "none"
     assert cap["place_ok"] is None and cap["time_ok"] is None
-    assert "no time or location info" in cap["reason"]
+    assert "removed this photo's time and location" in cap["reason"] and "Take photo" in cap["reason"]
+    assert cap["label"] == "time/place not confirmed"
     view = client.get(f"/api/quests/{q['id']}").json()
     assert view["tasks"][0]["status"] == "unconfirmed"
+    from tests.test_core import upload
+    upload(q, "t2")
+    upload(q, "t3")
     done = client.post(f"/api/quests/{q['id']}/finish", json={"screen_seconds": 30}).json()
-    assert done["points"] == 5  # completes the task like a self-confirm
-    assert not any(qq["id"] == q["id"] for qq, _, _ in badges._verified())
+    assert done["completed"] and done["points"] == 25  # the ◐ task completes it like a self-confirm (5)
+    verified_tasks = {t["id"] for qq, t, _ in badges._verified() if qq["id"] == q["id"]}
+    assert verified_tasks == {"t2", "t3"}  # the ◐ task never counts toward badges
 
 
 def test_gallery_photo_with_time_but_no_gps_is_unconfirmed(monkeypatch):

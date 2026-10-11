@@ -18,14 +18,15 @@ def test_finish_awards_badges_and_journal_lists_entry(monkeypatch):
         return {"match": True, "confidence": 0.95, "what_i_see": "yes", "reason": "clear"}
     monkeypatch.setattr(gemma, "chat", ok)
     q = new_quest()
-    upload(q, "t1")
+    for t in ("t1", "t2", "t3"):
+        upload(q, t)
     done = client.post(f"/api/quests/{q['id']}/finish", json={"note": "Saw a heron", "mood": "calm", "screen_seconds": 40}).json()
     codes = {b["code"] for b in done["new_badges"]} | set(badges.earned())
     assert "first_grass" in codes and "screen_light" in codes
     j = client.get("/api/journal").json()
     entry = next(e for e in j["entries"] if e["id"] == q["id"])
     assert entry["note"] == "Saw a heron" and entry["tasks"][0]["status"] == "pass"
-    assert j["streak"] >= 1
+    assert j["week"]["this_week"] >= 1 and j["week"]["goal"] == 3
     assert len(client.get("/api/badges").json()["badges"]) == len(badges.BADGES)
 
 

@@ -86,7 +86,8 @@ def test_unsure_then_self_confirm_and_finish(monkeypatch):
     assert cap["status"] == "unsure"
     assert client.post(f"/api/captures/{cap['id']}/self-confirm").json()["status"] == "self"
     done = client.post(f"/api/quests/{q['id']}/finish", json={"note": "lovely", "screen_seconds": 42}).json()
-    assert done["status"] == "done" and done["points"] == 5 and done["screen_seconds"] == 42
+    # 1 of 3 tasks is below 75%, so it's saved as a partial walk: in the journal, no points
+    assert done["status"] == "done" and done["partial"] and done["points"] == 0 and done["screen_seconds"] == 42
 
 
 def test_exif_is_stripped():

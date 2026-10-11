@@ -46,7 +46,8 @@ def test_rate_limit_per_ip():
 def test_rejects_non_images_and_bad_season():
     assert gal.post("/api/skies", data={"city": "x", "date": "d", "local_time": "t", "season": "fall"},
                     files={"image": ("a.jpg", b"nope", "image/jpeg")}, headers={"x-forwarded-for": "4.4.4.4"}).status_code == 400
-    assert post(season="monsoon", ip="5.5.5.5").status_code == 400
+    assert post(season="hurricane", ip="5.5.5.5").status_code == 400
+    assert post(season="monsoon", ip="5.5.5.6").status_code == 200  # tropical seasons are real seasons
 
 
 def _sky_capture(monkeypatch, moderation):

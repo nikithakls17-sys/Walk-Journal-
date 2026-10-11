@@ -79,8 +79,10 @@ def test_medium_needs_one_photo_300m_away(monkeypatch):
     q2 = walk("medium")
     upload(q2, "t1", lat=north(50))
     upload(q2, "t2", lat=north(400))
+    upload(q2, "t3", lat=north(100))
+    upload(q2, "t4", lat=north(120))  # 4 of 5 = 75%+ and one photo 300 m+ away
     done2 = client.post(f"/api/quests/{q2['id']}/finish", json={"screen_seconds": 30}).json()
-    assert done2["away_met"] and done2["requirement_met"] == 1 and done2["points"] == 20
+    assert done2["away_met"] and done2["requirement_met"] == 1 and done2["completed"] and done2["points"] == 40
 
 
 def test_far_photo_must_be_verified_to_count(monkeypatch):
@@ -95,9 +97,10 @@ def test_far_photo_must_be_verified_to_count(monkeypatch):
 def test_easy_has_no_away_goal(monkeypatch):
     gemma_says_yes(monkeypatch)
     q = walk("easy")
-    upload(q, "t1", lat=north(20))
+    for t in ("t1", "t2", "t3"):
+        upload(q, t, lat=north(20))
     done = client.post(f"/api/quests/{q['id']}/finish", json={"screen_seconds": 20}).json()
-    assert done["requirement_met"] == 1 and done["points"] == 10
+    assert done["requirement_met"] == 1 and done["completed"] and done["points"] == 30
 
 
 def test_map_shows_home_walks_pin_with_visit_count():
