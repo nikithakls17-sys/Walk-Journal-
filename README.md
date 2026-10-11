@@ -27,6 +27,16 @@ No destination needed. **Walk from here** turns a normal walk around your home i
 - **Medium and Hard need one verified photo at least 300 m from the start**, so you actually walk. The phone shows how far you are from the start. A walk that never gets that far is saved in your journal but earns no points, badges or streak day.
 - Every walk from here adds to one **Home walks** pin on your map, with a visit count.
 
+### Notifications
+
+All off until you turn them on in **Settings**:
+
+- **Daily walk reminder** at a time you pick (default 5 PM).
+- **Evening journal reminder** (default 8 PM), sent only if you haven't written a journal note today.
+- **Quest progress**: when a quest starts, one notification lists your tasks and updates itself as you go ("2 of 5 done"), with a **Take photo** action that opens the camera for the next task. It uses a single tag, so it replaces itself instead of stacking.
+
+They're real Web Push messages sent from Base Camp with VAPID keys from `.env` (`python -m basecamp.app.push --generate` creates them). **Notifications are text only, never photos or locations.** Code refuses to send a payload that contains coordinates, a place, or a photo link. **iPhone:** add Walk Journal to your Home Screen first (Share → Add to Home Screen, iOS 16.4+); iOS only allows notifications for Home Screen web apps.
+
 The app measures its own screen time with the Page Visibility API. Target: under 2 minutes per quest.
 
 ## Architecture
@@ -81,6 +91,7 @@ Scan the QR code with your phone. "Add to Home Screen" installs it as an app.
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Natural quest voice | The browser's built-in speech |
 | `SENTRY_DSN` | `gen_ai` traces of every Gemma call | No tracing |
 | `GALLERY_URL`, `GALLERY_TOKEN` | Sharing skies to the public gallery | Share button stays hidden |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Notifications (`python -m basecamp.app.push --generate`) | Notification toggles explain they're not set up |
 
 Install cloudflared with `winget install --id Cloudflare.cloudflared` (Windows) or `brew install cloudflared` (macOS). Without it, Base Camp prints your Wi-Fi URL, but phone browsers only allow camera + GPS over HTTPS.
 
@@ -102,6 +113,7 @@ Without `MONGODB_URI` the gallery falls back to SQLite. That works locally, but 
 | Open-Meteo | Coordinates of the chosen place | Current weather for the quest |
 | OpenStreetMap Nominatim | Your home coordinates rounded to ~1 km, once at setup | Your city name |
 | Sky Gallery | Only sky photos you choose to share, with city, date, time, season | The public gallery |
+| Your phone's push service (Google, Apple or Mozilla) | Encrypted notification text: reminder wording, quest title and task list. Never photos or locations | Notifications, if you turn them on |
 | Sentry (optional) | Model name, latency, token counts, outcome. **No prompts, photos, or responses.** | Tracing |
 
 **Never leaves:** quest photos, tracker screenshots, journal notes, mood, exact locations, visit history. They live in `data/` on your laptop. Every stored photo is re-encoded with its EXIF and GPS metadata stripped. Before a sky is shared, Gemma checks locally that it's mostly sky with no people, faces, or readable text. If it finds any, sharing is blocked.
@@ -125,6 +137,9 @@ A gallery photo with no EXIF time or GPS still gets Gemma's content check. If it
 
 - Gemma can tell "this is a lake", not "this is *that* lake". The location check covers that.
 - Phone clocks, GPS and EXIF data can be spoofed. This is a personal motivation app, not an anti-cheat system.
+- Screen time measures time in Walk Journal only, not your whole phone.
+- Reminders come from Base Camp, so the laptop has to be on and running Base Camp at reminder time.
+- The free Cloudflare quick tunnel gets a new URL each run. Notifications belong to the URL they were turned on from, so after a restart, open the new link and turn them on again (a named Cloudflare tunnel gives a stable URL).
 - Some phones and browsers remove location data when you pick a photo for a web page. Those photos show up honestly as "time/place not confirmed".
 - Offline captures are verified when you're back online. Time and place were recorded at the shutter, so the check is still valid later.
 
@@ -156,7 +171,7 @@ First Grass · Leaf Peeper · Cloud Spotter · Rare Find · Explorer · Regular 
 
 ```bash
 pip install pytest
-python -m pytest tests     # 46 tests: core loop, rules, walk from here, gallery photos + EXIF, places, journal, sky gallery, tracing, eval
+python -m pytest tests     # 62 tests: core loop, rules, walk from here, gallery photos + EXIF, notifications, places, journal, sky gallery, tracing, eval
 ```
 
 `BUILD_LOG.md` is the bug diary: what broke, why, and the fix.
