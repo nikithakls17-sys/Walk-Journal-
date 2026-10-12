@@ -1,6 +1,7 @@
 """Base Camp: the FastAPI server that runs on the laptop next to Gemma."""
 import asyncio
 import io
+import json
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -631,6 +632,28 @@ def finish_quest(qid: str, f: Finish):
     view["new_badges"] = badges.evaluate(qid) if not q["finished_at"] and prog["completed"] else []
     view["week"] = badges.week_progress()
     return view
+
+
+# ---------- rescue: offline items stranded on an expired link ----------
+# A phone keeps its offline queue under the link it was opened from. When a free tunnel link expires,
+# that queue can't reach Base Camp any more. /rescue.js (loaded by a bookmarklet on the old page) sends
+# photos to the normal capture endpoint, and quest start/finish items here: as a form field, because a
+# page on another site can send a form but not JSON. Same handlers as normal; nothing is ever deleted.
+
+@app.post("/api/rescue/job")
+def rescue_job(job: str = Form(...)):
+    try:
+        j = json.loads(job)
+    except ValueError:
+        raise HTTPException(400, "job must be JSON")
+    qid, body = j.get("questId"), j.get("body") or {}
+    if not qid or not store.get_quest(qid):
+        raise HTTPException(404, "unknown quest")
+    if j.get("kind") == "start":
+        return start_quest(qid, Start(**body))
+    if j.get("kind") == "finish":
+        return finish_quest(qid, Finish(**body))
+    raise HTTPException(400, "only start and finish items are rescued here; photos use the capture endpoint")
 
 
 # ---------- sky gallery ----------
