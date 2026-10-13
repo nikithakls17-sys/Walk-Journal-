@@ -6,7 +6,7 @@ the journal and on the map. Task badges (Leaf Peeper, Cloud Spotter...) need Gem
 from collections import Counter
 from datetime import date, datetime, timedelta
 
-from . import context, db, store
+from . import context, db, store, users
 
 BADGES = {
     "first_grass": ("First Grass", "🌱", "Complete your first walk"),
@@ -23,20 +23,21 @@ BADGES = {
 DEFAULT_WEEKLY_GOAL = 3
 
 
-def _finished_quests() -> list[dict]:
+def _finished_quests(uid: str | None = None) -> list[dict]:
     with db.tx() as c:
-        return db.rows(c.execute("SELECT * FROM quests WHERE status='done' ORDER BY finished_at").fetchall())
+        return db.rows(c.execute("SELECT * FROM quests WHERE status='done' AND user_id IS ? ORDER BY finished_at",
+                                 (uid,)).fetchall())
 
 
-def _done_quests() -> list[dict]:
+def _done_quests(uid: str | None = None) -> list[dict]:
     """Completed walks only: 75%+ of tasks done (and, for Walk from here, far enough from the start)."""
-    return [q for q in _finished_quests() if store.progress(q)["completed"]]
+    return [q for q in _finished_quests(uid) if store.progress(q)["completed"]]
 
 
-def _verified() -> list[tuple[dict, dict, dict]]:
+def _verified(uid: str | None = None) -> list[tuple[dict, dict, dict]]:
     """(quest, task, capture) for every Gemma-verified task in a completed walk."""
     out = []
-    for q in _done_quests():
+    for q in _done_quests(uid):
         caps = store.captures_for(q["id"])
         for t in q["tasks"]:
             passed = [c for c in caps if c["task_id"] == t["id"] and c["status"] == "pass"]
@@ -47,9 +48,9 @@ def _verified() -> list[tuple[dict, dict, dict]]:
 
 # ---------- weekly goal (Monday-Sunday weeks in the walker's timezone) ----------
 
-def weekly_goal() -> int:
+def weekly_goal(uid: str | None = None) -> int:
     try:
-        return max(1, min(7, int((db.get_setting("settings") or {}).get("weekly_goal") or DEFAULT_WEEKLY_GOAL)))
+        return max(1, min(7, int(users.settings(uid).get("weekly_goal") or DEFAULT_WEEKLY_GOAL)))
     except (TypeError, ValueError):
         return DEFAULT_WEEKLY_GOAL
 
@@ -67,12 +68,12 @@ def quest_day(q: dict) -> date:
     return datetime.fromtimestamp(q["finished_at"], context.tzinfo(q["tz"])).date()
 
 
-def week_progress(today: date | None = None) -> dict:
+def week_progress(today: date | None = None, uid: str | None = None) -> dict:
     """This week's completed walks against the goal. A week still in progress never counts against you."""
-    goal = weekly_goal()
-    tz = context.tzinfo((db.get_setting("settings") or {}).get("tz"))
+    goal = weekly_goal(uid)
+    tz = context.tzinfo(users.settings(uid).get("tz"))
     today = today or datetime.now(tz).date()
-    counts = Counter(_week(quest_day(q)) for q in _done_quests())
+    counts = Counter(_week(quest_day(q)) for q in _done_quests(uid))
     this = _week(today)
     wk = this if counts[this] >= goal else _prev(this)
     in_a_row = 0
@@ -88,18 +89,22 @@ def week_progress(today: date | None = None) -> dict:
             "weeks_in_a_row": in_a_row, "best_run": best, "weeks_met": sum(1 for w in counts if counts[w] >= goal)}
 
 
-def earned() -> dict[str, dict]:
+def earned(uid: str | None = None) -> dict[str, dict]:
+    """Local mode: the original badges table. Cloud mode: user_badges, one set per phone."""
     with db.tx() as c:
-        return {r["code"]: dict(r) for r in c.execute("SELECT * FROM badges").fetchall()}
+        if uid is None:
+            return {r["code"]: dict(r) for r in c.execute("SELECT * FROM badges").fetchall()}
+        return {r["code"]: dict(r) for r in c.execute("SELECT code, earned_at, quest_id FROM user_badges WHERE user_id=?",
+                                                       (uid,)).fetchall()}
 
 
-def evaluate(quest_id: str) -> list[dict]:
+def evaluate(quest_id: str, uid: str | None = None) -> list[dict]:
     """Award any newly earned badges after a completed walk. Returns the new ones."""
-    have = earned()
-    done = _done_quests()
-    verified = _verified()
+    have = earned(uid)
+    done = _done_quests(uid)
+    verified = _verified(uid)
     q = store.get_quest(quest_id)
-    week = week_progress()
+    week = week_progress(uid=uid)
     checks = {
         "first_grass": len(done) >= 1,
         "leaf_peeper": sum(1 for qq, t, _ in verified if t.get("category") == "leaf"
@@ -118,7 +123,10 @@ def evaluate(quest_id: str) -> list[dict]:
     with db.tx() as c:
         for code, ok in checks.items():
             if ok and code not in have:
-                c.execute("INSERT INTO badges VALUES (?,?,?)", (code, db.now(), quest_id))
+                if uid is None:
+                    c.execute("INSERT INTO badges VALUES (?,?,?)", (code, db.now(), quest_id))
+                else:
+                    c.execute("INSERT INTO user_badges VALUES (?,?,?,?)", (uid, code, db.now(), quest_id))
                 new.append(describe(code))
     return new
 
@@ -136,6 +144,6 @@ def describe(code: str) -> dict | None:
     return {"code": code, "name": name, "icon": icon, "how": how}
 
 
-def all_badges() -> list[dict]:
-    have = earned()
+def all_badges(uid: str | None = None) -> list[dict]:
+    have = earned(uid)
     return [describe(code) | {"earned_at": have.get(code, {}).get("earned_at")} for code in BADGES]

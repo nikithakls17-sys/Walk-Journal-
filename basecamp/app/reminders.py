@@ -3,7 +3,7 @@ import asyncio
 import logging
 from datetime import datetime
 
-from . import context, db, push
+from . import config, context, db, push
 
 log = logging.getLogger("walkjournal.reminders")
 CHECK_EVERY_S = 60
@@ -56,6 +56,8 @@ def due(settings: dict, now: datetime, sent: dict) -> list[str]:
 
 
 async def tick(now: datetime | None = None) -> list[str]:
+    if config.CLOUD:  # reminders are a local-mode feature (one walker, one schedule)
+        return []
     settings = db.get_setting("settings") or {}
     if not (settings.get("notify_daily") or settings.get("notify_journal")):
         return []

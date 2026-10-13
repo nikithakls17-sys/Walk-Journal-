@@ -210,16 +210,16 @@ def utc_noon(d: date) -> float:
 def test_week_well_walked_and_four_good_weeks(monkeypatch):
     weeks = [date(2026, 9, 14), date(2026, 9, 21), date(2026, 9, 28), date(2026, 10, 5)]
     fake = [{"finished_at": utc_noon(d), "tz": "UTC"} for d in weeks]
-    monkeypatch.setattr(badges, "_done_quests", lambda: fake)
-    monkeypatch.setattr(badges, "weekly_goal", lambda: 1)
+    monkeypatch.setattr(badges, "_done_quests", lambda uid=None: fake)
+    monkeypatch.setattr(badges, "weekly_goal", lambda uid=None: 1)
     w = badges.week_progress(today=date(2026, 10, 11))
     assert w["weeks_met"] == 4 and w["best_run"] == 4 and w["weeks_in_a_row"] == 4
 
 
 def test_unfinished_current_week_never_breaks_anything(monkeypatch):
     fake = [{"finished_at": utc_noon(date(2026, 10, 5)), "tz": "UTC"}]
-    monkeypatch.setattr(badges, "_done_quests", lambda: fake)
-    monkeypatch.setattr(badges, "weekly_goal", lambda: 1)
+    monkeypatch.setattr(badges, "_done_quests", lambda uid=None: fake)
+    monkeypatch.setattr(badges, "weekly_goal", lambda uid=None: 1)
     w = badges.week_progress(today=date(2026, 10, 13))  # new week, no walk yet
     assert w["this_week"] == 0 and w["weeks_in_a_row"] == 1
 

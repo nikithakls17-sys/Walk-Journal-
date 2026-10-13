@@ -18,6 +18,8 @@ class PushError(RuntimeError):
 
 
 def enabled() -> bool:
+    if config.CLOUD:  # the public beta has no reminders yet: they'd need one schedule per phone
+        return False
     return bool(config.VAPID_PUBLIC_KEY and config.VAPID_PRIVATE_KEY)
 
 

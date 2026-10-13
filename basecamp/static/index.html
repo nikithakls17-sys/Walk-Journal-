@@ -107,7 +107,38 @@
         <label class="toggle"><input type="checkbox" id="auto-read"><span>Read quests aloud as soon as I start</span></label>
         <p class="muted hint">Off by default. You can always tap “Read it to me” on the quest screen.</p>
       </div>
-      <div class="card">
+      <div class="card" id="your-data">
+        <h3>Your data</h3>
+        <div class="seal-note"><span class="seal">privacy</span><p class="privacy-note"></p></div>
+        <a class="btn ghost" id="export-btn" href="/api/export" download>⬇️ Export my journal</a>
+        <p class="muted hint">A .zip with every walk (tasks, notes, moods) and your photos.</p>
+        <div class="cloud-only" hidden>
+          <button class="btn ghost danger" id="delete-btn">🗑️ Delete my data</button>
+          <div id="delete-confirm" class="delete-confirm" hidden>
+            <p><b>Delete everything?</b> Your walks, photos, notes, badges and settings are erased from the Walk Journal
+              server for good. Export first if you'd like a copy.</p>
+            <button class="btn danger" id="delete-yes">Yes, delete everything</button>
+            <button class="btn ghost" id="delete-no">Keep my journal</button>
+          </div>
+          <p class="muted hint">No account needed: your journal is tied to this browser. Clearing the browser's site data
+            also loses it, so export it now and then.</p>
+        </div>
+        <p class="muted hint local-only">Your journal lives on the laptop running Base Camp, in its data folder.
+          Nothing can be deleted from the phone.</p>
+      </div>
+      <div class="card" id="feedback">
+        <h3>Send feedback</h3>
+        <p class="muted hint">What worked, what didn't, what you'd love. Only the person who made Walk Journal reads it.</p>
+        <label>Your message<textarea id="fb-message" rows="3" maxlength="2000" placeholder="I loved the critters, but…"></textarea></label>
+        <label class="time-row">How would you rate it?
+          <select id="fb-rating"><option value="">no rating</option>
+            <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+            <option>6</option><option>7</option><option>8</option><option>9</option><option>10</option>
+          </select> / 10</label>
+        <button class="btn" id="fb-send">Send feedback</button>
+        <p class="muted hint" id="fb-status"></p>
+      </div>
+      <div class="card" id="notif-card">
         <h3>Notifications</h3>
         <p class="ios-note">📱 <b>iPhone:</b> tap Share → <b>Add to Home Screen</b> first, then open Walk Journal from that icon.
           iPhones only allow notifications for apps on the Home Screen (iOS 16.4 or later).</p>
@@ -147,7 +178,7 @@
         <table class="rule-table">
           <tr><td>Right place</td><td>Taken near the place (about 400 m; bigger parks get more room). On “Walk from here”, anywhere within your distance: 1 mi, 5 mi or 20 mi.</td></tr>
           <tr><td>Right time</td><td>Taken after you start and before the quest ends. Quests always end before sunset.</td></tr>
-          <tr><td>Right thing</td><td>Gemma looks at the photo, on the laptop, never on a server.</td></tr>
+          <tr><td>Right thing</td><td class="checked-by">Gemma looks at the photo, on the laptop, never on a server.</td></tr>
         </table>
 
         <h3>What the marks mean</h3>
@@ -189,7 +220,7 @@
         </ul>
         <div class="seal-note">
           <span class="seal">your data</span>
-          <p>Your photos, notes, mood and exact location stay on the laptop running Base Camp. Only place searches, the quest text (to read it aloud), and skies you choose to share ever leave it.</p>
+          <p class="privacy-note">Your photos, notes, mood and exact location stay on the laptop running Base Camp. Only place searches, the quest text (to read it aloud), and skies you choose to share ever leave it.</p>
         </div>
       </div>
     </section>
@@ -263,6 +294,26 @@
       </div>
     </section>
   </main>
+
+  <!-- Welcome: first open only -->
+  <div id="welcome" class="welcome" hidden>
+    <div class="card note welcome-card">
+      <p class="eyebrow">Welcome <span class="beta-tag cloud-only" hidden>beta</span></p>
+      <h2>Walk Journal</h2>
+      <p class="intro">A little quest for the walk you were going to take anyway. The screen is the shortest part.</p>
+      <ul class="welcome-steps">
+        <li>🌿 <b>Gemma gives you a quest:</b> a few things to find on your walk, like a red leaf or a cloud shaped like something.</li>
+        <li>📸 <b>Snap a photo of each find.</b> Gemma checks it's the right thing, at the right place and time.</li>
+        <li>📖 <b>Write a line when you're back.</b> Each walk becomes a page in your diary and a pin on your map.</li>
+      </ul>
+      <p class="cloud-only beta-line" hidden><b>This is a free beta.</b> There's a small daily allowance (a few quests
+        and about 20 photo checks a day), and things may change. Tell me what you think in Settings → Send feedback.</p>
+      <div class="seal-note"><span class="seal">privacy</span><p class="privacy-note"></p></div>
+      <p class="muted hint cloud-only" hidden>No account needed. Your journal is private to this browser, and you can
+        export or delete it any time in Settings.</p>
+      <button class="btn big primary" id="welcome-go">Let's walk</button>
+    </div>
+  </div>
 
   <!-- Camera overlay -->
   <div id="camera" class="camera" hidden>

@@ -129,10 +129,10 @@ def progress(q: dict, tasks: list[dict] | None = None) -> dict:
             "completed": bool(counted) and done >= needed and away_met}
 
 
-def recent_task_types(limit_quests: int = 3) -> list[str]:
+def recent_task_types(limit_quests: int = 3, uid: str | None = None) -> list[str]:
     with db.tx() as c:
-        qs = db.rows(c.execute("SELECT tasks FROM quests WHERE started_at IS NOT NULL ORDER BY created_at DESC LIMIT ?",
-                               (limit_quests,)).fetchall())
+        qs = db.rows(c.execute("""SELECT tasks FROM quests WHERE started_at IS NOT NULL AND user_id IS ?
+                                  ORDER BY created_at DESC LIMIT ?""", (uid, limit_quests)).fetchall())
     labels = []
     for q in qs:
         for t in q["tasks"] or []:

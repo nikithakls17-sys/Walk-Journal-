@@ -9,11 +9,23 @@ const store = {
   del(k) { localStorage.removeItem(k); },
 };
 
+// No accounts: on a public (cloud) Base Camp, this random id keeps each phone's journal private to it.
+// A laptop Base Camp ignores it. It never leaves this site.
+const USER = (() => {
+  let id = store.get("wj-user");
+  if (!id) {
+    id = (crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`).replace(/[^A-Za-z0-9]/g, "");
+    try { store.set("wj-user", id); } catch {}
+  }
+  return id;
+})();
+const withUser = (path) => `${path}${path.includes("?") ? "&" : "?"}u=${encodeURIComponent(USER)}`;
+
 async function api(path, opts = {}) {
-  const init = { ...opts };
+  const init = { ...opts, headers: { "X-WJ-User": USER } };
   if (opts.json !== undefined) {
     init.method = init.method || "POST";
-    init.headers = { "Content-Type": "application/json" };
+    init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(opts.json);
   }
   let r;
@@ -32,7 +44,7 @@ async function api(path, opts = {}) {
   if (!r.ok) {
     let msg = r.statusText;
     try { msg = (await r.json()).detail || msg; } catch {}
-    throw new Error(msg);
+    throw Object.assign(new Error(msg), { status: r.status });  // 429 = a daily limit of the public beta
   }
   return r.json();
 }
@@ -394,7 +406,7 @@ async function prefetchAudio(q) {
   try {
     const cache = await caches.open(AUDIO_CACHE);
     if (await cache.match(url)) return true;
-    const r = await fetch(url);
+    const r = await fetch(url, { headers: { "X-WJ-User": USER } });
     if (!r.ok) return false;
     await cache.put(url, r);
     return true;
@@ -707,7 +719,7 @@ async function sync() {
     if (job.questId !== quest?.id) return;
     if (job.kind === "capture") {
       setLocalStatus(job.taskId, null);
-      if (err) toast(`A photo couldn't be saved: ${err.message}`);
+      if (err) toast(err.status === 429 ? err.message : `A photo couldn't be saved: ${err.message}`, err.status === 429 ? 9000 : 3500);
       else if (document.visibilityState === "visible")
         toast(res.status === "pass" ? `✓ ${res.label === "verified (gallery)" ? "Verified (gallery). " : ""}${res.reason || "Verified!"}`
           : res.reason || STATUS_TEXT[res.status], res.status === "unconfirmed" ? 8000 : 3500);
@@ -806,7 +818,7 @@ views.summary = () => {
   $("#sum-points").textContent = [line, weekLine(q.week)].filter(Boolean).join(" · ");
   $("#sum-badges").innerHTML = (q.new_badges || []).map((b) => `<div class="badge"><span>${b.icon}</span>${esc(b.name)}</div>`).join("");
   const skies = q.tasks.filter((t) => t.category === "sky" && ["pass", "self"].includes(t.status) && t.capture);
-  $("#sum-share").innerHTML = skies.length && online ? `<div class="share">
+  $("#sum-share").innerHTML = skies.length && online && CONFIG.gallery !== false ? `<div class="share">
       <p><b>Share this sky to the Sky Gallery?</b><br><small class="muted">Only the photo, your city, the date and time. Gemma checks it has no people first.</small></p>
       <label>City<input id="share-city" value="${esc(store.get("settings")?.home_city || "")}" placeholder="Warrensburg, MO"></label>
       <button class="btn" id="share-btn" data-cid="${skies[0].capture.id}">Share my sky</button></div>` : "";
@@ -935,6 +947,76 @@ views.settings = () => {
   $("#notif-status").textContent = notifSupport().message;
 };
 $("#auto-read").onchange = (e) => saveSettings({ auto_read: e.target.checked });
+
+// ---------- your data + feedback ----------
+
+$("#export-btn").href = withUser("/api/export");
+$("#delete-btn").onclick = () => { $("#delete-confirm").hidden = false; $("#delete-btn").hidden = true; };
+$("#delete-no").onclick = () => { $("#delete-confirm").hidden = true; $("#delete-btn").hidden = false; };
+$("#delete-yes").onclick = async (e) => {
+  e.target.disabled = true;
+  try {
+    const r = await api("/api/my-data", { method: "DELETE" });
+    for (const k of ["quest", "journalCache", "mapCache", "settings", "suggestions", WRITING_KEY]) store.del(k);
+    for (const job of await Outbox.all()) await Outbox.remove(job.id);
+    try { await caches.delete(AUDIO_CACHE); } catch {}
+    toast(`Deleted: ${r.deleted_walks} walk${r.deleted_walks === 1 ? "" : "s"} and ${r.deleted_photos} photo${r.deleted_photos === 1 ? "" : "s"}. Your journal is empty now.`, 6000);
+    $("#delete-confirm").hidden = true;
+    $("#delete-btn").hidden = false;
+    quest = null;
+    location.hash = "#setup";
+  } catch (err) {
+    toast(err.message, 6000);
+  } finally {
+    e.target.disabled = false;
+  }
+};
+$("#fb-send").onclick = async (e) => {
+  const message = $("#fb-message").value.trim();
+  const rating = $("#fb-rating").value ? +$("#fb-rating").value : null;
+  if (!message && rating == null) return ($("#fb-status").textContent = "Write a few words or pick a rating first.");
+  e.target.disabled = true;
+  try {
+    const r = await api("/api/feedback", { json: { message, rating } });
+    $("#fb-status").textContent = r.message;
+    $("#fb-message").value = "";
+    $("#fb-rating").value = "";
+  } catch (err) {
+    $("#fb-status").textContent = err.network ? "You're offline. Try again when you're back online." : err.message;
+  } finally {
+    e.target.disabled = false;
+  }
+};
+
+// ---------- mode: laptop (local) or public beta (cloud) ----------
+// Which privacy note to show and what's switched on comes from Base Camp; the last answer is kept for offline.
+
+let CONFIG = store.get("config", {});
+function applyConfig() {
+  const cloud = !!CONFIG.cloud;
+  document.body.dataset.mode = cloud ? "cloud" : "local";
+  $$(".cloud-only").forEach((el) => (el.hidden = !cloud));
+  $$(".local-only").forEach((el) => (el.hidden = cloud));
+  if (CONFIG.privacy) $$(".privacy-note").forEach((el) => (el.textContent = CONFIG.privacy));
+  if (CONFIG.backend === "google")
+    $$(".checked-by").forEach((el) => (el.textContent = "Gemma looks at the photo. Photos are checked by Google’s hosted Gemma."));
+  $("#notif-card").hidden = CONFIG.push === false && cloud;  // reminders are a laptop feature for now
+}
+async function loadConfig() {
+  try {
+    CONFIG = await api("/api/config");
+    store.set("config", CONFIG);
+  } catch {}
+  applyConfig();
+}
+function showWelcome() {
+  if (store.get("welcomed")) return;
+  $("#welcome").hidden = false;
+  $("#welcome-go").onclick = () => {
+    store.set("welcomed", Date.now());
+    $("#welcome").hidden = true;
+  };
+}
 $("#weekly-goal").onchange = (e) => saveSettings({ weekly_goal: +e.target.value });
 
 function notifSupport() {
@@ -1076,6 +1158,8 @@ function buildGrass() {
 // ---------- boot ----------
 
 buildGrass();
+applyConfig();
+loadConfig().then(showWelcome);
 loadSettings();
 quest = store.get("quest");
 route();

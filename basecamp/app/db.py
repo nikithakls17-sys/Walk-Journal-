@@ -88,6 +88,34 @@ CREATE TABLE IF NOT EXISTS badges (
   earned_at REAL,
   quest_id TEXT
 );
+
+-- Cloud mode (public beta): badges per phone. Local mode keeps using the badges table above.
+CREATE TABLE IF NOT EXISTS user_badges (
+  user_id TEXT,
+  code TEXT,
+  earned_at REAL,
+  quest_id TEXT,
+  PRIMARY KEY (user_id, code)
+);
+
+-- Cloud mode daily limits. key is "all", or a hashed phone id / IP address, never the raw value.
+CREATE TABLE IF NOT EXISTS usage (
+  day TEXT,
+  key TEXT,
+  action TEXT,
+  n INTEGER DEFAULT 0,
+  PRIMARY KEY (day, key, action)
+);
+
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  user_hash TEXT,
+  created_at REAL,
+  message TEXT,
+  rating INTEGER,
+  mode TEXT,
+  user_agent TEXT
+);
 """
 
 
@@ -116,7 +144,8 @@ def tx():
 MIGRATIONS = {
     "quests": [("mode", "TEXT DEFAULT 'place'"), ("start_lat", "REAL"), ("start_lng", "REAL"),
                ("away_goal_m", "REAL DEFAULT 0"), ("requirement_met", "INTEGER"), ("swaps_used", "INTEGER DEFAULT 0"),
-               ("completed", "INTEGER")],  # 1 = 75%+ of tasks done; 0 = partial walk (set at finish, never backfilled)
+               ("completed", "INTEGER"),  # 1 = 75%+ of tasks done; 0 = partial walk (set at finish, never backfilled)
+               ("user_id", "TEXT")],  # cloud mode: the phone that owns this walk. NULL = the local walker
     # proof: "live" (in-app camera + GPS), "exif" (gallery photo with EXIF time + GPS), "none" (gallery, no EXIF)
     "captures": [("distance_m", "REAL"), ("proof", "TEXT DEFAULT 'live'"),
                  # diagnostics for gallery photos: which EXIF fields arrived, and from which browser

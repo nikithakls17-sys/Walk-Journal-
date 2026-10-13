@@ -1,21 +1,26 @@
-"""Base Camp: the FastAPI server that runs on the laptop next to Gemma."""
+"""Base Camp: the FastAPI server. Local mode runs on the laptop next to Gemma in Ollama; cloud mode is the public
+beta on Render, with Google's hosted Gemma, one private journal per phone, and daily limits."""
 import asyncio
+import html
 import io
 import json
+import secrets
 import time
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import (badges, config, context, db, gallery_client, gemma, places, push, quests, reminders, store, tracing,
-               tts, verify)
+from . import (badges, config, context, db, gallery_client, gemma, limits, places, push, quests, reminders, store,
+               tracing, tts, users, verify)
 from .geo import M_PER_MI
 
 tracing.init()
@@ -24,13 +29,27 @@ db.init()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(reminders.loop())  # daily + journal reminders, checked once a minute
+    task = asyncio.create_task(reminders.loop())  # daily + journal reminders, checked once a minute (local mode)
     yield
     task.cancel()
 
 
 app = FastAPI(title="Walk Journal Base Camp", lifespan=lifespan)
 STATIC = Path(__file__).resolve().parents[1] / "static"
+User = Depends(users.current)  # None in local mode; the phone's hashed id in cloud mode
+
+
+def sharing_on() -> bool:
+    """The Sky Gallery (public sharing) is off in the public beta, whatever the environment says."""
+    return not config.CLOUD
+
+
+PRIVACY = {
+    "ollama": "Your photos, notes, mood and exact location stay on the laptop running Base Camp. Gemma checks your "
+              "photos right there, so they never leave the laptop.",
+    "google": "Photos are checked by Google’s hosted Gemma. Your journal, notes and mood are stored on the Walk Journal "
+              "server, and only you can see them. Nothing is ever shared publicly.",
+}
 
 
 # ---------- settings ----------
@@ -53,24 +72,34 @@ class Settings(BaseModel):
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "gemma": await gemma.available(), "model": config.GEMMA_MODEL,
-            "serpapi": bool(config.SERPAPI_KEY), "elevenlabs": bool(config.ELEVENLABS_API_KEY),
-            "gallery": bool(config.GALLERY_URL), "push": push.enabled()}
+    return {"ok": True, "gemma": await gemma.available(), "model": gemma.model_name(), "mode": config.MODE,
+            "backend": config.GEMMA_BACKEND, "serpapi": bool(config.SERPAPI_KEY),
+            "elevenlabs": bool(config.ELEVENLABS_API_KEY), "gallery": bool(config.GALLERY_URL) and sharing_on(), "push": push.enabled()}
+
+
+@app.get("/api/config")
+def app_config():
+    """What the phone needs to know about this Base Camp: which mode, which privacy note, what's switched on."""
+    backend = "google" if config.GEMMA_BACKEND == "google" else "ollama"
+    return {"mode": config.MODE, "cloud": config.CLOUD, "backend": backend, "privacy": PRIVACY[backend],
+            "photos_checked_by": "Google’s hosted Gemma" if backend == "google" else "Gemma on the laptop",
+            "beta": config.CLOUD, "gallery": sharing_on(), "push": push.enabled(), "can_delete": config.CLOUD,
+            "limits": limits.summary()}
 
 
 @app.get("/api/settings")
-def get_settings():
-    return Settings(**(db.get_setting("settings") or {})).model_dump()
+def get_settings(uid: str | None = User):
+    return Settings(**users.settings(uid)).model_dump()
 
 
 @app.post("/api/settings")
-def save_settings(s: Settings):
+def save_settings(s: Settings, uid: str | None = User):
     for t in (s.daily_time, s.journal_time):
         if not reminders.valid_hhmm(t):
             raise HTTPException(400, "times must look like 17:00")
     if not 1 <= s.weekly_goal <= 7:
         raise HTTPException(400, "weekly goal must be 1 to 7 walks")
-    db.set_setting("settings", s.model_dump())
+    db.set_setting(users.settings_key(uid), s.model_dump())
     return s
 
 
@@ -100,7 +129,7 @@ async def push_unsubscribe(request: Request):
 
 async def push_quest_progress(qid: str):
     """Update the single live quest notification (same tag, replaces itself) after a task changes."""
-    s = db.get_setting("settings") or {}
+    s = db.get_setting("settings") or {}  # push is local mode only (one walker)
     q = store.get_quest(qid)
     if not (s.get("notify_quest") and push.enabled() and q and q["status"] == "active"):
         return
@@ -124,7 +153,9 @@ def place_here(h: Here):
 
 
 @app.get("/api/places/suggest")
-async def suggest(lat: float, lng: float, tier: str = "nearby", difficulty: str = "easy", tz: str | None = None):
+async def suggest(request: Request, lat: float, lng: float, tier: str = "nearby", difficulty: str = "easy",
+                  tz: str | None = None, uid: str | None = User):
+    limits.take("searches", uid, users.client_ip(request))
     try:
         cands = await places.nearby(lat, lng, tier)
     except places.PlacesError as e:
@@ -145,13 +176,20 @@ async def suggest(lat: float, lng: float, tier: str = "nearby", difficulty: str 
 # ---------- map ----------
 
 @app.get("/api/map")
-def map_data():
+def map_data(uid: str | None = User):
     with db.tx() as c:
         done = db.rows(c.execute("""SELECT q.id, q.place_id, q.title, q.started_at, q.finished_at FROM quests q
-                                    WHERE q.status='done' ORDER BY q.finished_at DESC""").fetchall())
-        all_places = {p["id"]: p for p in db.rows(c.execute("SELECT id, name, type, lat, lng FROM places").fetchall())}
-        thumbs = db.rows(c.execute("""SELECT quest_id, photo FROM captures WHERE status IN ('pass','self','unconfirmed')
-                                      AND kind='photo' ORDER BY created_at""").fetchall())
+                                    WHERE q.status='done' AND q.user_id IS ? ORDER BY q.finished_at DESC""",
+                                 (uid,)).fetchall())
+        if uid is None:
+            all_places = {p["id"]: p for p in db.rows(c.execute("SELECT id, name, type, lat, lng FROM places").fetchall())}
+        else:  # cloud: only places from this phone's own quests, never other people's searches
+            all_places = {p["id"]: p for p in db.rows(c.execute(
+                """SELECT DISTINCT p.id, p.name, p.type, p.lat, p.lng FROM places p JOIN quests q ON q.place_id = p.id
+                   WHERE q.user_id = ?""", (uid,)).fetchall())}
+        thumbs = db.rows(c.execute("""SELECT c.quest_id, c.photo FROM captures c JOIN quests q ON q.id = c.quest_id
+                                      WHERE c.status IN ('pass','self','unconfirmed') AND c.kind='photo'
+                                      AND q.user_id IS ? ORDER BY c.created_at""", (uid,)).fetchall())
     photos_by_quest: dict[str, list[str]] = {}
     for t in thumbs:
         photos_by_quest.setdefault(t["quest_id"], []).append(f"/photos/{t['photo']}")
@@ -169,7 +207,7 @@ def map_data():
         if q["started_at"] and q["finished_at"]:
             outside += max(0, q["finished_at"] - q["started_at"])
     suggested = [p for pid, p in all_places.items()
-                 if pid not in visited and not pid.startswith("here-") and pid != HOME_WALKS_ID]
+                 if pid not in visited and not pid.startswith("here-") and not pid.startswith(HOME_WALKS_ID)]
     return {"visited": list(visited.values()), "suggested": suggested,
             "stats": {"walks": len(done), "places": len(visited), "outside_seconds": round(outside)}}
 
@@ -195,37 +233,42 @@ class NewQuest(BaseModel):
     tz: str | None = None
 
 
-def home_walks_place(lat: float, lng: float) -> dict:
+def home_walks_id(uid: str | None) -> str:
+    return HOME_WALKS_ID if uid is None else f"{HOME_WALKS_ID}-{uid}"
+
+
+def home_walks_place(lat: float, lng: float, uid: str | None = None) -> dict:
     """All Walk from here quests share one map pin, at home if it's set, otherwise at the first start."""
-    existing = store.get_place(HOME_WALKS_ID)
-    s = db.get_setting("settings", {}) or {}
+    existing = store.get_place(home_walks_id(uid))
+    s = users.settings(uid)
     if s.get("home_lat") is not None:
         lat, lng = s["home_lat"], s["home_lng"]
     elif existing:
         lat, lng = existing["lat"], existing["lng"]
-    return store.save_place({"id": HOME_WALKS_ID, "name": "Home walks", "type": "walk from home",
+    return store.save_place({"id": home_walks_id(uid), "name": "Home walks", "type": "walk from home",
                              "description": "", "features": [], "lat": lat, "lng": lng})
 
 
 @app.post("/api/quests")
-async def create_quest(req: NewQuest):
+async def create_quest(req: NewQuest, request: Request, uid: str | None = User):
     if req.difficulty not in quests.TASK_COUNTS:
         raise HTTPException(400, "difficulty must be easy, medium or hard")
     if req.distance_tier not in places.TIERS:
         raise HTTPException(400, "distance_tier must be nearby, walk_run or adventure")
+    limits.take("quests", uid, users.client_ip(request))
     if req.mode == "from_here":
         if req.lat is None or req.lng is None:
             raise HTTPException(400, "Walk from here needs your current location")
-        place = home_walks_place(req.lat, req.lng)
+        place = home_walks_place(req.lat, req.lng, uid)
         gen_place = quests.home_place(req.lat, req.lng)  # what Gemma sees: no destination, no features
         start, away_goal = (req.lat, req.lng), AWAY_GOAL_M[req.difficulty]
     elif req.mode == "no_location":
         # Location permission denied: everyday tasks only, no place check. The saved home (if any) only
         # sets the season and sunset; it is never used to check photos.
-        s = db.get_setting("settings", {}) or {}
+        s = users.settings(uid)
         lat = req.lat if req.lat is not None else s.get("home_lat", 39.0)
         lng = req.lng if req.lng is not None else s.get("home_lng", -95.0)
-        place = home_walks_place(lat, lng)
+        place = home_walks_place(lat, lng, uid)
         gen_place, start, away_goal = quests.home_place(lat, lng), (None, None), 0
     elif req.mode == "place":
         place = store.get_place(req.place_id or "")
@@ -234,18 +277,18 @@ async def create_quest(req: NewQuest):
         gen_place, start, away_goal = place, (None, None), 0
     else:
         raise HTTPException(400, "mode must be place, from_here or no_location")
-    ctx = context.build(gen_place, req.distance_tier, req.difficulty, req.tz, store.recent_task_types())
+    ctx = context.build(gen_place, req.distance_tier, req.difficulty, req.tz, store.recent_task_types(uid=uid))
     ctx["mode"] = req.mode
     quest, source, notes = await quests.generate(ctx, gen_place)
     qid = db.new_id()
     with db.tx() as c:
         c.execute("""INSERT INTO quests (id, place_id, created_at, tz, distance_tier, difficulty, title, spoken_intro,
-                     deadline_minutes, tasks, context, source, skips_left, mode, start_lat, start_lng, away_goal_m)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     deadline_minutes, tasks, context, source, skips_left, mode, start_lat, start_lng, away_goal_m, user_id)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (qid, place["id"], db.now(), req.tz, req.distance_tier, req.difficulty, quest["title"],
                    quest["spoken_intro"], quest["deadline_minutes"], db.dumps(quest["tasks"]),
                    db.dumps(ctx | {"repairs": notes}), source, 1 if req.difficulty == "hard" else 0,
-                   req.mode, start[0], start[1], away_goal))
+                   req.mode, start[0], start[1], away_goal, uid))
     return quest_view(qid)
 
 
@@ -279,8 +322,25 @@ def quest_view(qid: str) -> dict:
     }
 
 
+def own_quest(qid: str, uid: str | None) -> dict:
+    """The quest, if it belongs to this walker. Someone else's quest is a plain 404, as if it didn't exist."""
+    q = store.get_quest(qid)
+    if not q or q.get("user_id") != uid:
+        raise HTTPException(404, "unknown quest")
+    return q
+
+
+def own_capture(cid: str, uid: str | None) -> dict:
+    c = store.get_capture(cid)
+    if not c:
+        raise HTTPException(404, "not found")
+    own_quest(c["quest_id"], uid)
+    return c
+
+
 @app.get("/api/quests/{qid}")
-def get_quest(qid: str):
+def get_quest(qid: str, uid: str | None = User):
+    own_quest(qid, uid)
     return quest_view(qid)
 
 
@@ -289,8 +349,8 @@ class Start(BaseModel):
 
 
 @app.post("/api/quests/{qid}/start")
-def start_quest(qid: str, s: Start):
-    q = store.get_quest(qid) or _404()
+def start_quest(qid: str, s: Start, uid: str | None = User):
+    q = own_quest(qid, uid)
     if q["started_at"]:
         return quest_view(qid)
     now = time.time()
@@ -311,9 +371,9 @@ def swaps_left(q: dict) -> int:
 
 
 @app.post("/api/quests/{qid}/swap")
-async def swap_task(qid: str, s: Skip, background: BackgroundTasks):
+async def swap_task(qid: str, s: Skip, background: BackgroundTasks, request: Request, uid: str | None = User):
     """Replace one unfinished photo task with a new one from Gemma. No point penalty."""
-    q = store.get_quest(qid) or _404()
+    q = own_quest(qid, uid)
     if q["status"] == "done":
         raise HTTPException(400, "This quest is finished.")
     if swaps_left(q) < 1:
@@ -326,6 +386,7 @@ async def swap_task(qid: str, s: Skip, background: BackgroundTasks):
         raise HTTPException(400, "Only photo tasks can be swapped.")
     if old["status"] not in SWAPPABLE:
         raise HTTPException(400, "Only unfinished tasks can be swapped.")
+    limits.take("swaps", uid, users.client_ip(request))
     ctx = dict(q["context"] or {})
     ctx.setdefault("mode", q.get("mode") or "place")
     if ctx["mode"] == "from_here":
@@ -345,8 +406,8 @@ async def swap_task(qid: str, s: Skip, background: BackgroundTasks):
 
 
 @app.post("/api/quests/{qid}/skip")
-def skip_task(qid: str, s: Skip):
-    q = store.get_quest(qid) or _404()
+def skip_task(qid: str, s: Skip, uid: str | None = User):
+    q = own_quest(qid, uid)
     if q["skips_left"] < 1:
         raise HTTPException(400, "no skips left")
     tasks = q["tasks"]
@@ -394,14 +455,16 @@ async def add_capture(qid: str, task_id: str = Form(...), client_id: str = Form(
                       lat: float | None = Form(None), lng: float | None = Form(None),
                       accuracy: float | None = Form(None), source: str = Form("camera"),
                       file_modified: float | None = Form(None), photo: UploadFile = File(...),
-                      background: BackgroundTasks = None, request: Request = None):
+                      background: BackgroundTasks = None, request: Request = None, uid: str | None = User):
+    q = own_quest(qid, uid)
     existing = store.get_capture(client_id)
     if existing:
+        own_quest(existing["quest_id"], uid)
         return store.public_capture(existing)
-    q = store.get_quest(qid) or _404()
     task = next((t for t in q["tasks"] if t["id"] == task_id), None)
     if not task:
         raise HTTPException(404, "unknown task")
+    limits.take("photos", uid, users.client_ip(request) if request is not None else None)
     raw = await photo.read()
     if len(raw) > 15 * 1024 * 1024:
         raise HTTPException(413, "photo too large")
@@ -561,17 +624,18 @@ async def run_checks(cid: str, extra: dict | None = None):
 
 
 @app.post("/api/captures/{cid}/retry")
-async def retry_capture(cid: str):
-    c = store.get_capture(cid) or _404()
+async def retry_capture(cid: str, uid: str | None = User):
+    c = own_capture(cid, uid)
     if c["status"] == "pending":
         await check_once(c["id"])
     return store.public_capture(store.get_capture(c["id"]))
 
 
 @app.post("/api/captures/retry-pending")
-async def retry_pending(background: BackgroundTasks):
+async def retry_pending(background: BackgroundTasks, uid: str | None = User):
     with db.tx() as conn:
-        rows = conn.execute("SELECT id, quest_id FROM captures WHERE status='pending'").fetchall()
+        rows = conn.execute("""SELECT c.id, c.quest_id FROM captures c JOIN quests q ON q.id = c.quest_id
+                               WHERE c.status='pending' AND q.user_id IS ?""", (uid,)).fetchall()
     retried = [r for r in rows if r["id"] not in CHECKING]  # never a second check of a photo in progress
     for r in retried:
         await check_once(r["id"])
@@ -581,8 +645,8 @@ async def retry_pending(background: BackgroundTasks):
 
 
 @app.post("/api/captures/{cid}/self-confirm")
-def self_confirm(cid: str, background: BackgroundTasks):
-    c = store.get_capture(cid) or _404()
+def self_confirm(cid: str, background: BackgroundTasks, uid: str | None = User):
+    c = own_capture(cid, uid)
     if c["status"] not in ("unsure", "pending"):
         raise HTTPException(400, "only photos Gemma couldn't judge can be self-confirmed")
     place_by_design = c.get("proof") in ("no_location", "time_only")
@@ -613,8 +677,8 @@ def points_for(tasks: list[dict]) -> int:
 
 
 @app.post("/api/quests/{qid}/finish")
-def finish_quest(qid: str, f: Finish):
-    q = store.get_quest(qid) or _404()
+def finish_quest(qid: str, f: Finish, uid: str | None = User):
+    q = own_quest(qid, uid)
     now = time.time()
     finished = f.finished_at if f.finished_at and (q["started_at"] or 0) <= f.finished_at <= now + 60 else now
     if not q["started_at"]:
@@ -629,8 +693,8 @@ def finish_quest(qid: str, f: Finish):
                        completed=int(prog["completed"]))
     view = quest_view(qid)
     view["outside_seconds"] = (view["finished_at"] or now) - view["started_at"]
-    view["new_badges"] = badges.evaluate(qid) if not q["finished_at"] and prog["completed"] else []
-    view["week"] = badges.week_progress()
+    view["new_badges"] = badges.evaluate(qid, uid) if not q["finished_at"] and prog["completed"] else []
+    view["week"] = badges.week_progress(uid=uid)
     return view
 
 
@@ -642,6 +706,8 @@ def finish_quest(qid: str, f: Finish):
 
 @app.post("/api/rescue/job")
 def rescue_job(job: str = Form(...)):
+    if config.CLOUD:  # a laptop-tunnel problem; the cloud link never changes
+        raise HTTPException(404, "not found")
     try:
         j = json.loads(job)
     except ValueError:
@@ -650,9 +716,9 @@ def rescue_job(job: str = Form(...)):
     if not qid or not store.get_quest(qid):
         raise HTTPException(404, "unknown quest")
     if j.get("kind") == "start":
-        return start_quest(qid, Start(**body))
+        return start_quest(qid, Start(**body), None)
     if j.get("kind") == "finish":
-        return finish_quest(qid, Finish(**body))
+        return finish_quest(qid, Finish(**body), None)
     raise HTTPException(400, "only start and finish items are rescued here; photos use the capture endpoint")
 
 
@@ -663,8 +729,10 @@ class Share(BaseModel):
 
 
 @app.post("/api/captures/{cid}/share")
-async def share_sky(cid: str, s: Share):
-    c = store.get_capture(cid) or _404()
+async def share_sky(cid: str, s: Share, uid: str | None = User):
+    if not sharing_on():
+        raise HTTPException(404, "The Sky Gallery is turned off.")
+    c = own_capture(cid, uid)
     q = store.get_quest(c["quest_id"])
     task = next((t for t in q["tasks"] if t["id"] == c["task_id"]), {})
     if task.get("category") != "sky" or c["status"] not in ("pass", "self", "unconfirmed"):
@@ -683,8 +751,9 @@ async def share_sky(cid: str, s: Share):
 # ---------- voice ----------
 
 @app.get("/api/quests/{qid}/audio")
-async def quest_audio(qid: str):
-    q = store.get_quest(qid) or _404()
+async def quest_audio(qid: str, request: Request, uid: str | None = User):
+    q = own_quest(qid, uid)
+    limits.take("audio", uid, users.client_ip(request))
     try:
         path = await tts.mp3_for(tts.speech_text(q))
     except tts.TTSError as e:
@@ -695,26 +764,148 @@ async def quest_audio(qid: str):
 # ---------- journal & badges ----------
 
 @app.get("/api/journal")
-def journal():
+def journal(uid: str | None = User):
     with db.tx() as c:
-        qs = db.rows(c.execute("SELECT id FROM quests WHERE status='done' ORDER BY finished_at DESC").fetchall())
-        earned_by_quest: dict[str, list] = {}
-        for r in c.execute("SELECT code, quest_id FROM badges").fetchall():
-            b = badges.describe(r["code"])  # retired badges (old daily streaks) stay stored but aren't shown
-            if b:
-                earned_by_quest.setdefault(r["quest_id"], []).append(b)
+        qs = db.rows(c.execute("SELECT id FROM quests WHERE status='done' AND user_id IS ? ORDER BY finished_at DESC",
+                               (uid,)).fetchall())
+    earned_by_quest: dict[str, list] = {}
+    for r in badges.earned(uid).values():
+        b = badges.describe(r["code"])  # retired badges (old daily streaks) stay stored but aren't shown
+        if b:
+            earned_by_quest.setdefault(r["quest_id"], []).append(b)
     entries = []
     for row in qs:
         v = quest_view(row["id"])
         v["outside_seconds"] = (v["finished_at"] or 0) - (v["started_at"] or 0)
         v["badges"] = earned_by_quest.get(row["id"], [])
         entries.append(v)
-    return {"entries": entries, "week": badges.week_progress()}
+    return {"entries": entries, "week": badges.week_progress(uid=uid)}
 
 
 @app.get("/api/badges")
-def all_badges():
-    return {"badges": badges.all_badges(), "week": badges.week_progress()}
+def all_badges(uid: str | None = User):
+    return {"badges": badges.all_badges(uid), "week": badges.week_progress(uid=uid)}
+
+
+# ---------- feedback ----------
+
+class Feedback(BaseModel):
+    message: str = ""
+    rating: int | None = None  # 1-10, optional
+
+
+FEEDBACK_MAX = 2000
+
+
+@app.post("/api/feedback")
+def send_feedback(f: Feedback, request: Request, uid: str | None = User):
+    message = f.message.strip()
+    if not message and f.rating is None:
+        raise HTTPException(400, "Write a few words or pick a rating first.")
+    if len(message) > FEEDBACK_MAX:
+        raise HTTPException(400, f"Please keep it under {FEEDBACK_MAX} characters.")
+    if f.rating is not None and not 1 <= f.rating <= 10:
+        raise HTTPException(400, "The rating is 1 to 10.")
+    limits.take("feedback", uid, users.client_ip(request))
+    with db.tx() as c:
+        c.execute("""INSERT INTO feedback (id, user_hash, created_at, message, rating, mode, user_agent)
+                     VALUES (?,?,?,?,?,?,?)""",
+                  (db.new_id(), uid or "local", db.now(), message, f.rating, config.MODE,
+                   request.headers.get("user-agent", "")[:300]))
+    return {"ok": True, "message": "Thank you! Your feedback was sent. 🌿"}
+
+
+basic = HTTPBasic(auto_error=False)
+
+
+def admin(creds: HTTPBasicCredentials | None = Depends(basic)):
+    """Any username; ADMIN_PASSWORD as the password. With no ADMIN_PASSWORD set, the page doesn't exist."""
+    if not config.ADMIN_PASSWORD:
+        raise HTTPException(404, "not found")
+    if not creds or not secrets.compare_digest(creds.password.encode(), config.ADMIN_PASSWORD.encode()):
+        raise HTTPException(401, "admin only", headers={"WWW-Authenticate": 'Basic realm="Walk Journal admin"'})
+
+
+@app.get("/admin/feedback", response_class=HTMLResponse)
+def feedback_page(_=Depends(admin)):
+    with db.tx() as c:
+        rows = c.execute("SELECT * FROM feedback ORDER BY created_at DESC").fetchall()
+    rated = [r["rating"] for r in rows if r["rating"] is not None]
+    avg = f"{sum(rated) / len(rated):.1f} / 10 from {len(rated)} ratings" if rated else "no ratings yet"
+    trs = "".join(
+        f"<tr><td>{time.strftime('%Y-%m-%d %H:%M', time.gmtime(r['created_at']))} UTC</td>"
+        f"<td class=n>{r['rating'] if r['rating'] is not None else ''}</td><td>{html.escape(r['message'] or '')}</td>"
+        f"<td class=s>{html.escape((r['user_hash'] or '')[:8])}</td></tr>" for r in rows)
+    return f"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<meta name=robots content=noindex><title>Walk Journal feedback</title>
+<style>body{{font:15px/1.5 system-ui,sans-serif;margin:0;padding:16px;background:#FBF5E6;color:#4A3B2C}}
+table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #e3d6b8;padding:8px;text-align:left;vertical-align:top}}
+.n{{font-weight:700;text-align:center}}.s{{color:#998;font-family:monospace}}
+td:nth-child(3){{white-space:pre-wrap;word-break:break-word}}</style>
+<h1>Feedback</h1><p>{len(rows)} messages · average {avg}</p>
+<table><tr><th>When</th><th>Rating</th><th>Message</th><th>Walker</th></tr>{trs}</table>"""
+
+
+# ---------- your data: export and delete ----------
+
+@app.get("/api/export")
+def export_journal(uid: str | None = User):
+    """A zip of this walker's walks (journal.json) and photos. Read-only: nothing is changed."""
+    with db.tx() as c:
+        qids = [r["id"] for r in c.execute("""SELECT id FROM quests WHERE user_id IS ? AND started_at IS NOT NULL
+                                              ORDER BY started_at""", (uid,)).fetchall()]
+    walks, photos = [], []
+    for qid in qids:
+        v = quest_view(qid)
+        for t in v["tasks"]:
+            cap = t.get("capture")
+            if cap and cap.get("photo_url"):
+                name = cap["photo_url"].rsplit("/", 1)[-1]
+                photos.append(name)
+                cap["photo_file"] = f"photos/{name}"
+        walks.append(v)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("journal.json", json.dumps({"exported_at": datetime.now().isoformat(timespec="seconds"),
+                                               "app": "Walk Journal", "walks": walks,
+                                               "settings": users.settings(uid)}, ensure_ascii=False, indent=2))
+        z.writestr("README.txt", "Your Walk Journal: journal.json has every walk (tasks, notes, moods, points), "
+                                 "and photos/ has the photo that counted for each task.\n")
+        for name in dict.fromkeys(photos):
+            path = config.PHOTO_DIR / name
+            if path.exists():
+                z.write(path, f"photos/{name}")
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="walk-journal-{stamp}.zip"'})
+
+
+@app.delete("/api/my-data")
+def delete_my_data(uid: str | None = User):
+    """Cloud mode: erase this phone's walks, photos, settings, badges and feedback. Local mode never deletes:
+    the journal lives in the laptop's data folder, and that's where it's managed."""
+    if uid is None:
+        raise HTTPException(400, "On a laptop Base Camp, your journal lives in its data folder. "
+                                 "Nothing is deleted from the app.")
+    with db.tx() as c:
+        qs = c.execute("SELECT id, place_id FROM quests WHERE user_id=?", (uid,)).fetchall()
+        qids = [r["id"] for r in qs]
+        photos = [r["photo"] for qid in qids
+                  for r in c.execute("SELECT photo FROM captures WHERE quest_id=?", (qid,)).fetchall() if r["photo"]]
+        for qid in qids:
+            c.execute("DELETE FROM captures WHERE quest_id=?", (qid,))
+        c.execute("DELETE FROM quests WHERE user_id=?", (uid,))
+        for pid in {r["place_id"] for r in qs}:  # spots made from this walker's location, if no one else uses them
+            personal = pid.startswith("here-") or pid == home_walks_id(uid)
+            if personal and not c.execute("SELECT 1 FROM quests WHERE place_id=?", (pid,)).fetchone():
+                c.execute("DELETE FROM places WHERE id=?", (pid,))
+        c.execute("DELETE FROM places WHERE id=?", (home_walks_id(uid),))
+        c.execute("DELETE FROM user_badges WHERE user_id=?", (uid,))
+        c.execute("DELETE FROM feedback WHERE user_hash=?", (uid,))
+        c.execute("DELETE FROM settings WHERE key=?", (users.settings_key(uid),))
+    for name in photos:
+        (config.PHOTO_DIR / name).unlink(missing_ok=True)
+    return {"ok": True, "deleted_walks": len(qids), "deleted_photos": len(photos)}
 
 
 def _404():

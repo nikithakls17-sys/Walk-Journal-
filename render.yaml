@@ -1,17 +1,42 @@
-# Render Blueprint for the public Sky Gallery. Base Camp stays on your laptop.
+# Render Blueprint: Walk Journal public beta (cloud mode). One web service + one persistent disk.
+# Keys are never in this file: every secret is `sync: false`, so Render asks for it in the dashboard.
+# The laptop's local mode (python -m basecamp) is unchanged and doesn't use this file.
+# The disk starts empty, so the public beta starts with an empty database. Nothing from a laptop is uploaded.
 services:
   - type: web
-    name: walk-journal-sky-gallery
+    name: walk-journal
     runtime: python
-    plan: free
-    rootDir: gallery
+    plan: starter            # persistent disks need a paid instance type (Starter is the smallest)
+    region: oregon
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /healthz
+    # --proxy-headers: Render's proxy passes the visitor's IP, which the daily per-IP limits use
+    startCommand: uvicorn basecamp.app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'
+    healthCheckPath: /api/health
+    autoDeploy: false        # deploy when you choose, not on every push
+    disk:
+      name: walk-journal-data
+      mountPath: /var/data   # SQLite database + photos live here and survive deploys and restarts
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
-      - key: MONGODB_URI
-        sync: false   # paste your MongoDB Atlas connection string in the Render dashboard
-      - key: GALLERY_TOKEN
-        generateValue: true   # copy this into Base Camp's .env as GALLERY_TOKEN
+      - key: WALKJOURNAL_MODE
+        value: cloud          # one private journal per phone, daily limits, sharing off
+      - key: DATA_DIR
+        value: /var/data
+      - key: GEMMA_BACKEND
+        value: google
+      - key: GOOGLE_GEMMA_MODEL
+        value: gemma-4-26b-a4b-it   # hosted Gemma 4; accepts images, which the photo checks need
+      - key: GOOGLE_API_KEY
+        sync: false           # Google AI Studio API key (aistudio.google.com/apikey)
+      - key: SERPAPI_KEY
+        sync: false           # serpapi.com/manage-api-key ("Find me a walk"). Optional: "Walk from here" works without it
+      - key: ELEVENLABS_API_KEY
+        sync: false           # optional: read-aloud voice. Without it, phones use their own voice
+      - key: ELEVENLABS_VOICE_ID
+        sync: false           # optional
+      - key: ADMIN_PASSWORD
+        generateValue: true   # password for /admin/feedback (any username). Copy it from the dashboard
+      - key: SENTRY_DSN
+        sync: false           # optional: tracing
