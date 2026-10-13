@@ -96,7 +96,44 @@ SKY GALLERY (public, separate service on Render)   gallery/  +  render.yaml
 
 If Gemma is unreachable, Base Camp still works: quests come from a code-written fallback built from the same seasonal banks and rules, and photo checks wait as "pending" until Gemma is back.
 
-## Setup
+## Two modes
+
+| | **Local mode** (the original) | **Cloud mode** (public beta) |
+|---|---|---|
+| Runs on | Your laptop: `python -m basecamp` | Render, one web service + a disk |
+| Gemma | `gemma4:e4b` in Ollama, on the laptop | Google AI Studio's hosted Gemma (`gemma-4-26b-a4b-it`, accepts images) |
+| Who uses it | You (and friends on your link) share one journal | Anyone with the link. Each phone gets its own private journal |
+| Laptop needed | Yes, on and awake | No |
+| Daily limits | None | Per phone, per network and for the whole app (see below) |
+| Privacy note in the app | "Never leaves the laptop" | "Photos are checked by Google's hosted Gemma." |
+| Sky Gallery, notifications | Available | Off |
+| Delete my data | Not from the app (the journal is the laptop's `data/` folder) | Settings → Your data → Delete my data |
+
+Both modes use exactly the same quest rules and photo checks; only where Gemma runs changes. Set the mode with
+`WALKJOURNAL_MODE=local|cloud` and the Gemma backend with `GEMMA_BACKEND=ollama|google` (cloud defaults to google).
+
+**No accounts in cloud mode.** On first open the phone makes a random id, keeps it in the browser and sends it
+with every request. The server stores only a hash of it, and every walk, photo, setting and badge belongs to one id:
+someone else's walk is a 404. Clearing the browser's site data loses the journal, so Settings has **Export my
+journal** (a .zip of every walk as JSON plus the photos).
+
+**Daily limits (cloud mode)** reset at midnight UTC. A friendly message explains when one is reached.
+
+| Action | Per phone | Per network (IP) | Whole app |
+|---|---|---|---|
+| New quests | 5 | 15 | 300 |
+| Photo checks | 20 | 60 | 2000 |
+| Place searches (SerpApi) | 4 | 10 | 30 |
+| Task swaps | 15 | 40 | 600 |
+| Read-alouds (ElevenLabs) | 5 | 15 | 150 |
+| Feedback messages | 5 | 15 | 500 |
+
+Change any of them with an environment variable, e.g. `LIMIT_PHOTOS_PER_USER=30`, `LIMIT_SEARCHES_PER_DAY=50`.
+
+**Feedback.** Settings → Send feedback saves a message and an optional 1-10 rating. Read them all at
+`/admin/feedback` (any username, `ADMIN_PASSWORD` as the password). Without `ADMIN_PASSWORD` the page doesn't exist.
+
+## Setup (local mode)
 
 **You need:** Python 3.11+, [Ollama](https://ollama.com), and optionally [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for HTTPS to your phone.
 
@@ -123,16 +160,29 @@ Scan the QR code with your phone. "Add to Home Screen" installs it as an app.
 
 Install cloudflared with `winget install --id Cloudflare.cloudflared` (Windows) or `brew install cloudflared` (macOS). Without it, Base Camp prints your Wi-Fi URL, but phone browsers only allow camera + GPS over HTTPS.
 
-### Deploy the Sky Gallery (Render + MongoDB Atlas)
+## Deploy the public beta (cloud mode on Render)
 
-1. Create a free MongoDB Atlas cluster and copy its connection string.
-2. On Render: **New → Blueprint**, point it at this repo. It reads `render.yaml`.
-3. Set `MONGODB_URI` in the Render dashboard. Copy the generated `GALLERY_TOKEN`.
-4. In Base Camp's `.env`, set `GALLERY_URL=https://<your-service>.onrender.com` and `GALLERY_TOKEN=...`.
+`render.yaml` is a Blueprint for one web service (`walk-journal`) with a 1 GB persistent disk at `/var/data` for
+the SQLite database and photos. It starts with an empty database: nothing from a laptop is uploaded.
 
-Without `MONGODB_URI` the gallery falls back to SQLite. That works locally, but Render's free tier has no persistent disk, so skies would reset on redeploy.
+1. **Get the keys** (none of them go in the repo):
+   - `GOOGLE_API_KEY` (required): [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → Create API key.
+   - `SERPAPI_KEY` (optional, for "Find me a walk"): [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key).
+     The free plan is 100 searches a month; "Walk from here" needs no search.
+   - `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (optional): without them phones read quests with their own voice.
+2. On [dashboard.render.com](https://dashboard.render.com): **New → Blueprint**, connect this GitHub repo, and pick the `main` branch.
+3. Render reads `render.yaml` and asks for each `sync: false` value. Paste your keys and leave the optional ones blank.
+4. **Apply**. The Starter instance is needed for the persistent disk (a free instance can't have one).
+5. When the deploy is live, open `https://<service>.onrender.com/api/health`, which should show `"gemma": true` and `"mode": "cloud"`.
+6. Find `ADMIN_PASSWORD` under the service's **Environment** tab (Render generated it), then open `/admin/feedback`.
 
-## What leaves the laptop, and what never does
+`autoDeploy` is off, so pushing code never changes the live beta until you press **Manual Deploy**.
+
+The Sky Gallery (`gallery/`) is no longer in the Blueprint, because public sharing is off in the beta. To run it
+again, deploy `gallery/` as its own Render service with `MONGODB_URI` and `GALLERY_TOKEN`, and set `GALLERY_URL`
+and `GALLERY_TOKEN` in a local Base Camp's `.env`.
+
+## What leaves the laptop, and what never does (local mode)
 
 | Goes to | What | Why |
 |---|---|---|
@@ -145,6 +195,18 @@ Without `MONGODB_URI` the gallery falls back to SQLite. That works locally, but 
 | Sentry (optional) | Model name, latency, token counts, outcome. **No prompts, photos, or responses.** | Tracing |
 
 **Never leaves:** quest photos, tracker screenshots, journal notes, mood, exact locations, visit history. They live in `data/` on your laptop. Every stored photo is re-encoded with its EXIF and GPS metadata stripped. Before a sky is shared, Gemma checks locally that it's mostly sky with no people, faces, or readable text. If it finds any, sharing is blocked.
+
+### Cloud mode (public beta)
+
+| Goes to | What | Why |
+|---|---|---|
+| Google AI Studio (hosted Gemma) | Quest prompts and **photos for checking** (EXIF and GPS stripped first) | Quests and photo checks. The app says so: "Photos are checked by Google's hosted Gemma." |
+| The Walk Journal server (Render) | Your walks, photos, notes, mood, settings, tied to a hash of your phone's random id | Your journal. Only your phone can read it |
+| SerpApi, ElevenLabs, Open-Meteo, Nominatim | Same as local mode | Same |
+
+Nothing is shared publicly: the Sky Gallery and notifications are off. **Delete my data** erases the phone's walks,
+photos, settings, badges and feedback from the server. Daily-limit counters store only hashes of the phone id and
+IP address.
 
 ## Proof verification
 
@@ -199,7 +261,7 @@ First Grass · Leaf Peeper · Cloud Spotter · Rare Find · Explorer · Regular 
 
 ```bash
 pip install pytest
-python -m pytest tests     # 102 tests: core loop, rules, task swaps, walk from here, gallery photos + EXIF, notifications, places, journal, sky gallery, tracing, eval
+python -m pytest tests     # 123 tests: core loop, rules, task swaps, walk from here, gallery photos + EXIF, notifications, places, journal, sky gallery, tracing, eval, cloud mode
 ```
 
 `BUILD_LOG.md` is the bug diary: what broke, why, and the fix.
@@ -210,7 +272,11 @@ Friends and shared quests, public profiles, travel quests, a native app, and run
 
 ## Commits after the deadline
 
-None so far. Any commit made after Oct 11, 11:59 PM PDT will be listed here.
+Any commit made after Oct 11, 11:59 PM PDT is listed here.
+
+- **Oct 12:** cloud mode for a public beta. Google AI Studio's hosted Gemma, a Render Blueprint with a persistent
+  disk, a private journal per phone, daily limits, feedback with an admin page, export / delete my data, and a
+  welcome screen. Local mode is unchanged.
 
 ## License
 
