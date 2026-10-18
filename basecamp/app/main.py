@@ -19,8 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import (badges, config, context, db, gallery_client, gemma, limits, places, push, quests, reminders, store,
-               tracing, tts, users, verify)
+from . import (badges, config, context, db, gallery_client, gemma, limits, photos, places, push, quests, reminders,
+               store, tracing, tts, users, verify)
 from .geo import M_PER_MI
 
 tracing.init()
@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(reminders.loop())  # daily + journal reminders, checked once a minute (local mode)
     yield
     task.cancel()
+    db.flush_pending()  # cloud mode: anything Atlas hasn't got yet goes before the server stops
 
 
 app = FastAPI(title="Walk Journal Base Camp", lifespan=lifespan)
@@ -47,8 +48,8 @@ def sharing_on() -> bool:
 PRIVACY = {
     "ollama": "Your photos, notes, mood and exact location stay on the laptop running Base Camp. Gemma checks your "
               "photos right there, so they never leave the laptop.",
-    "google": "Photos are checked by Google’s hosted Gemma. Your journal, notes and mood are stored on the Walk Journal "
-              "server, and only you can see them. Nothing is ever shared publicly.",
+    "google": "Photos are checked by Google’s hosted Gemma. On the free tier, Google may use them to improve its "
+              "products. Don’t photograph people or anything private.",
 }
 
 
@@ -491,12 +492,12 @@ async def add_capture(qid: str, task_id: str = Form(...), client_id: str = Form(
     elif q.get("mode") == "no_location":
         lat = lng = accuracy = None
     try:
-        jpeg, img = verify.clean_image(raw)  # EXIF (incl. GPS) is gone from here on
+        jpeg, img = photos.clean(raw)  # EXIF (incl. GPS) is gone from here on; cloud photos are 800 px, ~100 KB
     except Exception:
         raise HTTPException(400, "not an image")
     cid = db.new_id()
     fname = f"{cid}.jpg"
-    (config.PHOTO_DIR / fname).write_bytes(jpeg)
+    photos.save(fname, jpeg)
     ua =(request.headers.get("user-agent", "") if request is not None else "")[:300]
     CHECKING.add(cid)  # claimed before the row exists, so a sync can't start a second check
     try:
@@ -519,7 +520,7 @@ async def run_checks(cid: str, extra: dict | None = None):
     c = store.get_capture(cid)
     q = store.get_quest(c["quest_id"])
     task = next(t for t in q["tasks"] if t["id"] == c["task_id"])
-    jpeg = (config.PHOTO_DIR / c["photo"]).read_bytes()
+    jpeg = photos.load(c["photo"])
     tz = context.tzinfo(q["tz"])
 
     if task["kind"] == "tracker":
@@ -737,7 +738,7 @@ async def share_sky(cid: str, s: Share, uid: str | None = User):
     task = next((t for t in q["tasks"] if t["id"] == c["task_id"]), {})
     if task.get("category") != "sky" or c["status"] not in ("pass", "self", "unconfirmed"):
         raise HTTPException(400, "Only verified sky photos can be shared.")
-    jpeg = (config.PHOTO_DIR / c["photo"]).read_bytes()
+    jpeg = photos.load(c["photo"])
     ok, message = await gallery_client.moderate(jpeg)
     if not ok:
         raise HTTPException(422, message)
@@ -854,14 +855,14 @@ def export_journal(uid: str | None = User):
     with db.tx() as c:
         qids = [r["id"] for r in c.execute("""SELECT id FROM quests WHERE user_id IS ? AND started_at IS NOT NULL
                                               ORDER BY started_at""", (uid,)).fetchall()]
-    walks, photos = [], []
+    walks, names = [], []
     for qid in qids:
         v = quest_view(qid)
         for t in v["tasks"]:
             cap = t.get("capture")
             if cap and cap.get("photo_url"):
                 name = cap["photo_url"].rsplit("/", 1)[-1]
-                photos.append(name)
+                names.append(name)
                 cap["photo_file"] = f"photos/{name}"
         walks.append(v)
     buf = io.BytesIO()
@@ -871,10 +872,10 @@ def export_journal(uid: str | None = User):
                                                "settings": users.settings(uid)}, ensure_ascii=False, indent=2))
         z.writestr("README.txt", "Your Walk Journal: journal.json has every walk (tasks, notes, moods, points), "
                                  "and photos/ has the photo that counted for each task.\n")
-        for name in dict.fromkeys(photos):
-            path = config.PHOTO_DIR / name
-            if path.exists():
-                z.write(path, f"photos/{name}")
+        for name in dict.fromkeys(names):
+            jpeg = photos.load(name)
+            if jpeg is not None:
+                z.writestr(f"photos/{name}", jpeg)
     stamp = datetime.now().strftime("%Y-%m-%d")
     return Response(buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="walk-journal-{stamp}.zip"'})
@@ -890,7 +891,7 @@ def delete_my_data(uid: str | None = User):
     with db.tx() as c:
         qs = c.execute("SELECT id, place_id FROM quests WHERE user_id=?", (uid,)).fetchall()
         qids = [r["id"] for r in qs]
-        photos = [r["photo"] for qid in qids
+        names = [r["photo"] for qid in qids
                   for r in c.execute("SELECT photo FROM captures WHERE quest_id=?", (qid,)).fetchall() if r["photo"]]
         for qid in qids:
             c.execute("DELETE FROM captures WHERE quest_id=?", (qid,))
@@ -903,9 +904,8 @@ def delete_my_data(uid: str | None = User):
         c.execute("DELETE FROM user_badges WHERE user_id=?", (uid,))
         c.execute("DELETE FROM feedback WHERE user_hash=?", (uid,))
         c.execute("DELETE FROM settings WHERE key=?", (users.settings_key(uid),))
-    for name in photos:
-        (config.PHOTO_DIR / name).unlink(missing_ok=True)
-    return {"ok": True, "deleted_walks": len(qids), "deleted_photos": len(photos)}
+    photos.delete(names)
+    return {"ok": True, "deleted_walks": len(qids), "deleted_photos": len(names)}
 
 
 def _404():
@@ -916,10 +916,10 @@ def _404():
 
 @app.get("/photos/{name}")
 def photo(name: str):
-    path = (config.PHOTO_DIR / name).resolve()
-    if path.parent != config.PHOTO_DIR.resolve() or not path.exists():
+    jpeg = photos.load(name)
+    if jpeg is None:
         raise HTTPException(404)
-    return FileResponse(path, headers={"Cache-Control": "private, max-age=31536000"})
+    return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000"})
 
 
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")

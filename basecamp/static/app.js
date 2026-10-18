@@ -1002,11 +1002,26 @@ function applyConfig() {
     $$(".checked-by").forEach((el) => (el.textContent = "Gemma looks at the photo. Photos are checked by Google’s hosted Gemma."));
   $("#notif-card").hidden = CONFIG.push === false && cloud;  // reminders are a laptop feature for now
 }
+// The public beta runs on Render's free plan: the server naps after 15 quiet minutes and takes about a minute to
+// wake. If the first answer is slow, say so kindly and keep asking, instead of looking broken.
+const WAKE_AFTER_MS = 2500, WAKE_RETRY_MS = 3000, WAKE_GIVE_UP_MS = 3 * 60 * 1000;
 async function loadConfig() {
-  try {
-    CONFIG = await api("/api/config");
-    store.set("config", CONFIG);
-  } catch {}
+  const local = CONFIG.cloud === false;  // a laptop Base Camp doesn't nap, so no waking message there
+  const shown = setTimeout(() => { if (!local) $("#waking").hidden = false; }, WAKE_AFTER_MS);
+  const until = Date.now() + WAKE_GIVE_UP_MS;
+  for (;;) {
+    try {
+      CONFIG = await api("/api/config");
+      store.set("config", CONFIG);
+      break;
+    } catch (err) {
+      const waking = err.network || err.status === 503;  // Render answers 502/503 while the server starts
+      if (!waking || local || !navigator.onLine || Date.now() > until) break;
+      await new Promise((r) => setTimeout(r, WAKE_RETRY_MS));
+    }
+  }
+  clearTimeout(shown);
+  $("#waking").hidden = true;
   applyConfig();
 }
 function showWelcome() {

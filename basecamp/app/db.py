@@ -4,7 +4,7 @@ import time
 import uuid
 from contextlib import contextmanager
 
-from . import config
+from . import atlas, config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -136,6 +136,8 @@ def tx():
     try:
         yield conn
         conn.commit()
+        if config.ATLAS:
+            atlas.flush(conn)
     finally:
         conn.close()
 
@@ -154,6 +156,11 @@ MIGRATIONS = {
 
 
 def init():
+    if config.ATLAS:
+        # A working copy left from before a restart: send what it still owes Atlas, then rebuild it from Atlas.
+        if not flush_pending():
+            raise RuntimeError("Can't reach MongoDB Atlas, and the working copy has unsaved changes. Not starting.")
+        config.DB_PATH.unlink(missing_ok=True)
     with tx() as c:
         c.executescript(SCHEMA)
         for table, cols in MIGRATIONS.items():
@@ -161,6 +168,22 @@ def init():
             for name, decl in cols:
                 if name not in have:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        if config.ATLAS:
+            atlas.restore(c)
+            atlas.install_triggers(c)
+
+
+def flush_pending() -> bool:
+    """Cloud mode: copy any changes still waiting to Atlas (at shutdown, or before rebuilding the working copy)."""
+    if not (config.ATLAS and config.DB_PATH.exists()):
+        return True
+    conn = connect()
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name=?", (atlas.CHANGES,)).fetchone():
+            return True
+        return atlas.flush(conn)
+    finally:
+        conn.close()
 
 
 JSON_COLS = {"features", "raw", "tasks", "context", "quality", "gemma", "results"}

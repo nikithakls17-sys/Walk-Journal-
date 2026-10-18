@@ -1,5 +1,5 @@
 // Walk Journal service worker: the app shell works with no signal at the park.
-const SHELL = "wj-shell-v12";
+const SHELL = "wj-shell-v13";
 const RUNTIME = "wj-runtime-v1";
 const SHELL_FILES = [
   "/", "/index.html", "/app.js", "/queue.js", "/style.css", "/manifest.json",

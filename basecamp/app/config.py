@@ -9,7 +9,6 @@ load_dotenv(ROOT / ".env")
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT / "data"))
 PHOTO_DIR = DATA_DIR / "photos"
 AUDIO_DIR = DATA_DIR / "audio"
-DB_PATH = DATA_DIR / "walkjournal.db"
 for d in (DATA_DIR, PHOTO_DIR, AUDIO_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
@@ -18,6 +17,16 @@ for d in (DATA_DIR, PHOTO_DIR, AUDIO_DIR):
 # quota, and Gemma calls go to Google AI Studio's hosted Gemma.
 MODE = os.getenv("WALKJOURNAL_MODE", "local").strip().lower()
 CLOUD = MODE == "cloud"
+# Cloud mode storage: MongoDB Atlas (database "walk_journal" on the free cluster). Render's free plan has no disk,
+# so with a MONGODB_URI every table and photo lives in Atlas and the SQLite file is only a working copy, rebuilt
+# from Atlas at each start (atlas.py). Local mode always uses data/walkjournal.db and never touches Atlas.
+MONGODB_URI = os.getenv("MONGODB_URI", "")
+MONGODB_DB = os.getenv("MONGODB_DB", "walk_journal")
+ATLAS = CLOUD and bool(MONGODB_URI)
+if CLOUD and not ATLAS and os.getenv("RENDER"):  # Render sets RENDER; its free disk would lose every walk
+    raise RuntimeError("Cloud mode on Render needs MONGODB_URI: the free filesystem is wiped on every restart.")
+# A different file name, so a laptop trying cloud mode can never replace its own journal with the working copy.
+DB_PATH = DATA_DIR / ("atlas-working-copy.db" if ATLAS else "walkjournal.db")
 # Where Gemma runs: "ollama" (local) or "google" (AI Studio's hosted Gemma). Cloud mode defaults to google.
 GEMMA_BACKEND = os.getenv("GEMMA_BACKEND", "google" if CLOUD else "ollama").strip().lower()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")

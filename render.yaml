@@ -1,29 +1,30 @@
-# Render Blueprint: Walk Journal public beta (cloud mode). One web service + one persistent disk.
+# Render Blueprint: Walk Journal public beta (cloud mode). One FREE web service, no disk: $0.
 # Keys are never in this file: every secret is `sync: false`, so Render asks for it in the dashboard.
 # The laptop's local mode (python -m basecamp) is unchanged and doesn't use this file.
-# The disk starts empty, so the public beta starts with an empty database. Nothing from a laptop is uploaded.
+# Storage is MongoDB Atlas (free M0 cluster, database "walk_journal"): walks, settings and small photos (800 px, ~100 KB,
+# no EXIF). Render's free filesystem is wiped on every restart, so nothing is kept on it.
+# Atlas starts empty, so the public beta starts with an empty journal. Nothing from a laptop is uploaded.
+# The free instance naps after 15 quiet minutes; the first visit after that takes about a minute (the app says so).
 services:
   - type: web
     name: walk-journal
     runtime: python
-    plan: starter            # persistent disks need a paid instance type (Starter is the smallest)
+    plan: free
     region: oregon
     buildCommand: pip install -r requirements.txt
     # --proxy-headers: Render's proxy passes the visitor's IP, which the daily per-IP limits use
     startCommand: uvicorn basecamp.app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'
     healthCheckPath: /api/health
     autoDeploy: false        # deploy when you choose, not on every push
-    disk:
-      name: walk-journal-data
-      mountPath: /var/data   # SQLite database + photos live here and survive deploys and restarts
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: WALKJOURNAL_MODE
         value: cloud          # one private journal per phone, daily limits, sharing off
-      - key: DATA_DIR
-        value: /var/data
+      - key: MONGODB_URI
+        sync: false           # Atlas connection string (Atlas → Connect → Drivers). Network Access must allow 0.0.0.0/0
+      - key: MONGODB_DB
+        value: walk_journal
       - key: GEMMA_BACKEND
         value: google
       - key: GOOGLE_GEMMA_MODEL

@@ -49,13 +49,21 @@ Convert km to miles (1 km = 0.621 mi). Use 0 for values that are not visible. If
 If the screenshot says "Today", use the date you are given as today."""
 
 
-def clean_image(data: bytes, max_px: int = 1600) -> tuple[bytes, Image.Image]:
-    """Rotate per EXIF, then re-encode without any EXIF/GPS metadata."""
+def clean_image(data: bytes, max_px: int = 1600, max_bytes: int | None = None) -> tuple[bytes, Image.Image]:
+    """Rotate per EXIF, then re-encode without any EXIF/GPS metadata. With max_bytes, lower the JPEG quality
+    (and if needed the size) until the photo fits, so cloud photos stay small in Atlas."""
     img = Image.open(io.BytesIO(data))
     img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((max_px, max_px))
-    out = io.BytesIO()
-    img.save(out, "JPEG", quality=85)  # no exif= argument -> metadata dropped
+    for quality in (85, 75, 65, 55, 45, 35):
+        out = io.BytesIO()
+        img.save(out, "JPEG", quality=quality, optimize=True)  # no exif= argument -> metadata dropped
+        if max_bytes is None or out.tell() <= max_bytes:
+            return out.getvalue(), img
+    while out.tell() > max_bytes and min(img.size) > 200:  # very busy photos: shrink until it fits
+        img.thumbnail((int(img.width * 0.8), int(img.height * 0.8)))
+        out = io.BytesIO()
+        img.save(out, "JPEG", quality=35, optimize=True)
     return out.getvalue(), img
 
 
