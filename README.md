@@ -81,7 +81,12 @@ PHONE (PWA in the browser)                         LAPTOP = "Base Camp"  (python
         so camera + GPS work on the phone          - SQLite: places, quests, captures, badges
                                                    - Sentry gen_ai tracing (optional)
 
-SKY GALLERY (public, separate service on Render)   gallery/  +  render.yaml
+PUBLIC BETA (cloud mode, Render free plan)         render.yaml
+- The same FastAPI app, with Google AI Studio's hosted Gemma
+- MongoDB Atlas (free M0, database walk_journal): every table and photo. SQLite is only a working copy,
+  rebuilt from Atlas at each start, because Render's free disk is wiped on every restart
+
+SKY GALLERY (public, separate service, off in the beta)   gallery/
 - FastAPI + MongoDB Atlas (SQLite fallback)
 - Receives ONLY sky photos you choose to share: resized to 1280 px, EXIF stripped, city-level location
 ```
@@ -100,12 +105,13 @@ If Gemma is unreachable, Base Camp still works: quests come from a code-written 
 
 | | **Local mode** (the original) | **Cloud mode** (public beta) |
 |---|---|---|
-| Runs on | Your laptop: `python -m basecamp` | Render, one web service + a disk |
+| Runs on | Your laptop: `python -m basecamp` | Render's free plan, one web service ($0) |
+| Storage | SQLite + photo files in `data/` | MongoDB Atlas free cluster, database `walk_journal` |
 | Gemma | `gemma4:e4b` in Ollama, on the laptop | Google AI Studio's hosted Gemma (`gemma-4-26b-a4b-it`, accepts images) |
 | Who uses it | You (and friends on your link) share one journal | Anyone with the link. Each phone gets its own private journal |
 | Laptop needed | Yes, on and awake | No |
 | Daily limits | None | Per phone, per network and for the whole app (see below) |
-| Privacy note in the app | "Never leaves the laptop" | "Photos are checked by Google's hosted Gemma." |
+| Privacy note in the app | "Never leaves the laptop" | "Photos are checked by Google's hosted Gemma. On the free tier, Google may use them to improve its products. Don't photograph people or anything private." |
 | Sky Gallery, notifications | Available | Off |
 | Delete my data | Not from the app (the journal is the laptop's `data/` folder) | Settings → Your data → Delete my data |
 
@@ -160,21 +166,41 @@ Scan the QR code with your phone. "Add to Home Screen" installs it as an app.
 
 Install cloudflared with `winget install --id Cloudflare.cloudflared` (Windows) or `brew install cloudflared` (macOS). Without it, Base Camp prints your Wi-Fi URL, but phone browsers only allow camera + GPS over HTTPS.
 
-## Deploy the public beta (cloud mode on Render)
+## Deploy the public beta (cloud mode on Render, $0)
 
-`render.yaml` is a Blueprint for one web service (`walk-journal`) with a 1 GB persistent disk at `/var/data` for
-the SQLite database and photos. It starts with an empty database: nothing from a laptop is uploaded.
+`render.yaml` is a Blueprint for one **free** web service (`walk-journal`) with no disk. Render's free filesystem
+is wiped on every restart, deploy and spin-down, so cloud mode keeps everything in **MongoDB Atlas** (your free M0
+cluster, a new database called `walk_journal`, created on the first write):
+
+- One collection per table (`quests`, `captures`, `settings`, `usage`, `feedback`, ...), one document per row.
+  SQLite is only a working copy: rebuilt from Atlas when the server starts, and every committed change is copied
+  to Atlas straight away (`basecamp/app/atlas.py`). If Atlas is briefly unreachable, the changes wait and go with
+  the next one; the server won't rebuild over changes that haven't reached Atlas yet.
+- Photos go in the `photos` collection, re-encoded at most 800 px and about 100 KB, with EXIF and GPS stripped.
+  That's roughly 4,000 photos before the free 512 MB fills up, and the daily limits keep it far from that.
+- It starts empty: nothing from a laptop is uploaded. Local mode never connects to Atlas, even with a
+  `MONGODB_URI` in `.env`, and cloud mode uses a different SQLite file name, so a laptop journal is never replaced.
+
+The free instance **naps after 15 minutes** with no visitors and takes about a minute to wake. On a first visit,
+Render shows its own loading page. A phone that already has the app cached shows "Waking up the trail…" and keeps
+trying until the server answers.
 
 1. **Get the keys** (none of them go in the repo):
+   - `MONGODB_URI` (required): in [Atlas](https://cloud.mongodb.com), **Connect → Drivers**, copy the
+     `mongodb+srv://...` string and put your database user's password in it. Under **Network Access**, allow
+     `0.0.0.0/0`, because Render's free plan has no fixed outbound IP.
    - `GOOGLE_API_KEY` (required): [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → Create API key.
    - `SERPAPI_KEY` (optional, for "Find me a walk"): [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key).
      The free plan is 100 searches a month; "Walk from here" needs no search.
-   - `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (optional): without them phones read quests with their own voice.
+   - `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `SENTRY_DSN` (optional): leave blank. Without ElevenLabs,
+     phones read quests with their own voice.
 2. On [dashboard.render.com](https://dashboard.render.com): **New → Blueprint**, connect this GitHub repo, and pick the `main` branch.
 3. Render reads `render.yaml` and asks for each `sync: false` value. Paste your keys and leave the optional ones blank.
-4. **Apply**. The Starter instance is needed for the persistent disk (a free instance can't have one).
+4. **Apply**. The plan is Free, so no card charge.
 5. When the deploy is live, open `https://<service>.onrender.com/api/health`, which should show `"gemma": true` and `"mode": "cloud"`.
 6. Find `ADMIN_PASSWORD` under the service's **Environment** tab (Render generated it), then open `/admin/feedback`.
+
+Cloud mode on Render refuses to start without `MONGODB_URI`, so a missing key can't quietly lose walks.
 
 `autoDeploy` is off, so pushing code never changes the live beta until you press **Manual Deploy**.
 
@@ -200,12 +226,12 @@ and `GALLERY_TOKEN` in a local Base Camp's `.env`.
 
 | Goes to | What | Why |
 |---|---|---|
-| Google AI Studio (hosted Gemma) | Quest prompts and **photos for checking** (EXIF and GPS stripped first) | Quests and photo checks. The app says so: "Photos are checked by Google's hosted Gemma." |
-| The Walk Journal server (Render) | Your walks, photos, notes, mood, settings, tied to a hash of your phone's random id | Your journal. Only your phone can read it |
+| Google AI Studio (hosted Gemma) | Quest prompts and **photos for checking** (EXIF and GPS stripped first) | Quests and photo checks. The app says so: "Photos are checked by Google's hosted Gemma. On the free tier, Google may use them to improve its products. Don't photograph people or anything private." |
+| The Walk Journal server (Render) and its database (MongoDB Atlas) | Your walks, small photos (800 px, no EXIF), notes, mood, settings, tied to a hash of your phone's random id | Your journal. Only your phone can read it |
 | SerpApi, ElevenLabs, Open-Meteo, Nominatim | Same as local mode | Same |
 
 Nothing is shared publicly: the Sky Gallery and notifications are off. **Delete my data** erases the phone's walks,
-photos, settings, badges and feedback from the server. Daily-limit counters store only hashes of the phone id and
+photos, settings, badges and feedback from the server and from Atlas. Daily-limit counters store only hashes of the phone id and
 IP address.
 
 ## Proof verification
@@ -277,6 +303,9 @@ Any commit made after Oct 11, 11:59 PM PDT is listed here.
 - **Oct 12:** cloud mode for a public beta. Google AI Studio's hosted Gemma, a Render Blueprint with a persistent
   disk, a private journal per phone, daily limits, feedback with an admin page, export / delete my data, and a
   welcome screen. Local mode is unchanged.
+- **Oct 19:** the public beta moves to Render's free plan ($0): storage in MongoDB Atlas instead of a paid disk,
+  photos 800 px / ~100 KB without EXIF, a "Waking up the trail…" message while the free server wakes, and a
+  clearer cloud privacy note about Google's free tier. Local mode is unchanged.
 
 ## License
 
