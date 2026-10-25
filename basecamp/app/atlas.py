@@ -112,3 +112,13 @@ def flush(c: sqlite3.Connection) -> bool:
         c.execute(f"DELETE FROM {CHANGES} WHERE seq <= ?", (pending[-1]["seq"],))
         c.commit()
         return True
+
+
+def reachable() -> bool:
+    """Health check: one cheap ping (no reads or writes)."""
+    try:
+        database().command("ping")
+        return True
+    except Exception as e:
+        log.warning("Atlas ping failed: %s", e)
+        return False

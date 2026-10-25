@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import (badges, config, context, db, gallery_client, gemma, limits, photos, places, push, quests, reminders,
+from . import (atlas, badges, config, context, db, gallery_client, gemma, limits, photos, places, push, quests, reminders,
                store, tracing, tts, users, verify)
 from .geo import M_PER_MI
 
@@ -75,7 +75,8 @@ class Settings(BaseModel):
 async def health():
     return {"ok": True, "gemma": await gemma.available(), "model": gemma.model_name(), "mode": config.MODE,
             "backend": config.GEMMA_BACKEND, "serpapi": bool(config.SERPAPI_KEY),
-            "elevenlabs": bool(config.ELEVENLABS_API_KEY), "gallery": bool(config.GALLERY_URL) and sharing_on(), "push": push.enabled()}
+            "elevenlabs": bool(config.ELEVENLABS_API_KEY), "gallery": bool(config.GALLERY_URL) and sharing_on(), "push": push.enabled(),
+            "mongodb": await asyncio.to_thread(atlas.reachable) if config.ATLAS else None}
 
 
 @app.get("/api/config")
